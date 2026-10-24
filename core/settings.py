@@ -1,0 +1,91 @@
+import json
+import locale
+import threading
+
+from . import paths
+
+DEFAULTS = {
+    "theme": "dark",            # dark / light / system
+    "language": "auto",         # auto / ja / en
+    "download_dir": "",         # 空ならデフォルト
+    "format": "mp4",            # mp4 / mp3
+    "mp4_quality": "best",      # best / 1080 / 720 / 480
+    "mp3_bitrate": "320",       # 320 / 192 / 128
+    "cookies_browser": "none",  # none / edge / chrome / firefox
+    "auto_check_app": True,
+    "auto_update_ytdlp": True,
+}
+
+CHOICES = {
+    "theme": {"dark", "light", "system"},
+    "language": {"auto", "ja", "en"},
+    "format": {"mp4", "mp3"},
+    "mp4_quality": {"best", "1080", "720", "480"},
+    "mp3_bitrate": {"320", "192", "128"},
+    "cookies_browser": {"none", "edge", "chrome", "firefox"},
+}
+
+
+def system_language() -> str:
+    try:
+        lang = (locale.getlocale()[0] or "") or (locale.getdefaultlocale()[0] or "")
+    except Exception:
+        lang = ""
+    return "ja" if lang.lower().startswith("ja") else "en"
+
+
+class Settings:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._data = dict(DEFAULTS)
+        self._load()
+
+    def _load(self):
+        f = paths.settings_file()
+        if f.exists():
+            try:
+                saved = json.loads(f.read_text(encoding="utf-8"))
+                if isinstance(saved, dict):
+                    for k, v in saved.items():
+                        if k in DEFAULTS and self._valid(k, v):
+                            self._data[k] = v
+            except Exception:
+                pass  # 壊れていたらデフォルトで起動する
+
+    @staticmethod
+    def _valid(key, value):
+        if key in CHOICES:
+            return value in CHOICES[key]
+        if key in ("auto_check_app", "auto_update_ytdlp"):
+            return isinstance(value, bool)
+        if key == "download_dir":
+            return isinstance(value, str)
+        return False
+
+    def get(self, key):
+        with self._lock:
+            return self._data[key]
+
+    def all(self):
+        with self._lock:
+            d = dict(self._data)
+        d["download_dir_effective"] = self.download_dir()
+        d["language_effective"] = system_language() if d["language"] == "auto" else d["language"]
+        return d
+
+    def set(self, key, value):
+        if key not in DEFAULTS or not self._valid(key, value):
+            raise ValueError(f"invalid setting: {key}={value!r}")
+        with self._lock:
+            self._data[key] = value
+            self._save_locked()
+
+    def _save_locked(self):
+        f = paths.settings_file()
+        tmp = f.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(f)
+
+    def download_dir(self) -> str:
+        d = self.get("download_dir")
+        return d if d else str(paths.default_download_dir())
