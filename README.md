@@ -1,64 +1,81 @@
 # OQIDA
 
-YouTubeのURLを貼って、MP4かMP3で保存する個人用ソフト。
-中身は yt-dlp。ダーク/ライト/システム、日本語/English の切り替え、アプリ内アップデートつき。
+YouTubeのURLを貼って、MP4またはMP3で保存するWindows用デスクトップソフト。
+内部で [yt-dlp](https://github.com/yt-dlp/yt-dlp) と [FFmpeg](https://ffmpeg.org/) を使用しています。
 
-## フォルダの中身
+A Windows desktop app that saves a YouTube URL as MP4 or MP3. Powered by yt-dlp and FFmpeg.
 
-| 場所 | 役割 |
-|---|---|
-| `main.py` | アプリの入口。画面とプログラムをつなぐ |
-| `ui/` | 見た目（HTML・CSS・JS）。文言は `ui/i18n.js` |
-| `core/` | ダウンロード・更新の処理 |
-| `installer/oqida.iss` | インストーラーの設計図（デスクトップショートカットもここ） |
-| `.github/workflows/release.yml` | タグを打つと自動でインストーラーを作る設定 |
-| `build.bat` | 自分のPCでインストーラーを作りたいとき用 |
+## 機能
 
-## 最初にやること（1回だけ）
+- URLを貼って MP4 / MP3 を選ぶだけで保存（画質・音質の指定、複数のキュー対応）
+- テーマ切り替え（ダーク / ライト / システム）
+- 表示言語の切り替え（日本語 / English）
+- アプリ内アップデート（設定 → アップデート）
+- yt-dlp の自動更新
+- デスクトップショートカット付きインストーラー
 
-1. `core/version.py` の `UPDATE_REPO` を、自分のGitHubのリポジトリ名にする（例 `mellowhq/oqida`）。
-   アプリはここのReleasesを見て新しい版を探す。**公開(Public)リポジトリにしてね**（非公開だとアプリから見えない）。
-2. このフォルダをそのリポジトリにアップロード（push）する。
+## インストール
 
-## インストーラーを作る（GitHubにおまかせ）
+[Releases](https://github.com/mellowhq/oqida/releases) から最新の `OQIDA-x.y.z-Setup.exe` をダウンロードして実行します。
+管理者権限は不要です。
 
-1. GitHubで `v0.1.0` のようなタグを付けてpushする。
-   ```
-   git tag v0.1.0
-   git push origin v0.1.0
-   ```
-2. 数分待つと、リポジトリの Releases に `OQIDA-0.1.0-Setup.exe` が出る。
-3. それをダウンロードして実行すると、インストールされてデスクトップにショートカットができる。
+初回起動時のみ、yt-dlp・FFmpeg・Deno を自動でダウンロードします（約250MB）。
+署名のない実行ファイルのため、初回は Windows SmartScreen の警告が表示されることがあります。
 
-自分のPCで作りたい場合は、Python 3.12 と Inno Setup 6 を入れて `build.bat` をダブルクリック。
+## 使い方
 
-## アップデートの出し方
+1. URLを入力欄に貼り付ける
+2. 形式（MP4 / MP3）と画質・音質を選ぶ
+3. 「ダウンロード」を押す
 
-1. 直したあと、次の番号のタグを付けてpushする（例 `v0.2.0`）。
-2. Releasesに新しいインストーラーが出る。
-3. 手元のOQIDAで **設定 → アップデート → 更新を確認 → ダウンロード → 更新して再起動**。
-   （起動時に自動で確認もする。バナーも出る）
+保存先やテーマ、言語、アップデートは「設定」から変更できます。
+YouTube側の仕様変更で保存できなくなった場合は、設定の「yt-dlp」から更新してください。
 
-yt-dlp（YouTubeを読む部分）はアプリとは別に更新される。
-**設定 → アップデート** の「yt-dlpを自動で更新」がオンなら、起動のたびに最新へ入れ替える。
-YouTube側の変更で急に落とせなくなったら、まずここの「更新を確認」を押す。
+## 開発
 
-## 初回起動
-
-最初の1回だけ、yt-dlp・ffmpeg・Deno（YouTube対応に必要）を自動で取得する（約250MB）。
-保存先は `%LOCALAPPDATA%\OQIDA`（設定の「データフォルダ」から開ける）。
-
-## 注意
-
-- 署名なしのexeなので、初回は Windows の SmartScreen が「PCを保護しました」と出ることがある。
-  「詳細情報」→「実行」で進める。
-- 動画の保存は、自分で見る個人利用の範囲で。著作権や YouTube の利用規約は自分で気をつけて。
-- 画面の確認だけなら、ブラウザで `ui/index.html?mock=1` を開くと動作サンプルが出る。
-
-## 開発メモ
+必要なもの: Python 3.12 / Windows 10 以降（WebView2）
 
 ```
 pip install -r requirements.txt
-python main.py          # 起動（Windows）
-python -m pytest tests  # テスト（ffmpegとyt-dlpが入っていること）
+python main.py
 ```
+
+テスト（FFmpeg と yt-dlp が PATH にあること）:
+
+```
+pip install pytest pillow playwright
+python -m pytest tests
+```
+
+画面の確認のみなら、ブラウザで `ui/index.html?mock=1` を開くと、ダミーデータで表示できます。
+
+### ビルド
+
+```
+build.bat
+```
+
+Python 3.12 と [Inno Setup 6](https://jrsoftware.org/isinfo.php) が必要です。`dist/` にインストーラーが作られます。
+
+### リリース
+
+`v0.1.0` の形式のタグを push すると、GitHub Actions がインストーラーをビルドして Releases に添付します。
+アプリは `core/version.py` の `UPDATE_REPO` にある Releases を参照してアップデートを検出します。
+
+## 構成
+
+| パス | 内容 |
+|---|---|
+| `main.py` | エントリーポイント（ウィンドウと画面側 API） |
+| `core/` | ダウンロード処理・アップデート・設定 |
+| `ui/` | 画面（HTML / CSS / JS）、文言は `ui/i18n.js` |
+| `installer/oqida.iss` | Inno Setup のインストーラー定義 |
+| `.github/workflows/release.yml` | リリースビルド |
+
+## 注意
+
+個人利用の範囲でお使いください。ダウンロードするコンテンツの著作権および各サービスの利用規約については、利用者の責任で確認してください。
+
+## ライセンス・クレジット
+
+yt-dlp（Unlicense）、FFmpeg（GPL ビルドを使用）、Deno（MIT）は、それぞれのライセンスに従って初回起動時に取得されます。
