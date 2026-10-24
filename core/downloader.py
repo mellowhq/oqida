@@ -12,6 +12,8 @@ URL_RE = re.compile(r"^https?://\S+$", re.I)
 
 # yt-dlpの出力に付ける目印（アプリ側でこの行だけ読み取る）
 P_TITLE = "OQIDA_TITLE|"
+P_SITE = "OQIDA_SITE|"
+P_THUMB = "OQIDA_THUMB|"
 P_PROG = "OQIDA_PROG|"
 P_PP = "OQIDA_PP|"
 P_DONE = "OQIDA_DONE|"
@@ -19,6 +21,9 @@ P_DONE = "OQIDA_DONE|"
 ERROR_PATTERNS = [
     ("bot_check", ("confirm you're not a bot", "confirm you’re not a bot", "sign in to confirm")),
     ("age", ("age-restricted", "confirm your age", "inappropriate for some users")),
+    ("login", ("login required", "requires authentication", "need to log in", "log in to", "please log in",
+               "nsfw tweet", "rate-limit reached")),
+    ("no_video", ("no video could be found", "there is no video", "no video formats found")),
     ("private", ("private video", "members-only", "join this channel")),
     ("unavailable", ("video unavailable", "has been removed", "no longer available", "this video is not available",
                      "account associated with this video has been terminated")),
@@ -49,6 +54,8 @@ def build_args(job, outdir, ytdlp, ffdir, deno, cookies_browser="none"):
         "--windows-filenames", "--no-mtime",
         "-o", os.path.join(outdir, "%(title).150B.%(ext)s"),
         "--print", f"{P_TITLE}%(title)s",
+        "--print", f"{P_SITE}%(webpage_url_domain)s",
+        "--print", f"{P_THUMB}%(thumbnail)s",
         "--print", f"after_move:{P_DONE}%(filepath)s",
         "--progress-template",
         "download:" + P_PROG + "%(progress.status)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|"
@@ -103,7 +110,7 @@ class Engine:
             raise ValueError("bad_url")
         job = {
             "id": next(self._ids), "url": url, "fmt": fmt, "quality": quality, "bitrate": bitrate,
-            "outdir": outdir, "status": "queued", "title": "", "percent": 0.0, "speed": 0.0, "eta": 0,
+            "outdir": outdir, "status": "queued", "title": "", "site": "", "thumb": "", "percent": 0.0, "speed": 0.0, "eta": 0,
             "filepath": "", "error": "", "error_detail": "", "created": time.time(),
             "_cancel": False, "_streams": [],
         }
@@ -238,6 +245,15 @@ class Engine:
         with self._cv:
             if line.startswith(P_TITLE):
                 job["title"] = line[len(P_TITLE):]
+            elif line.startswith(P_SITE):
+                dom = line[len(P_SITE):].strip().lower().split(":")[0]
+                for pre in ("www.", "m.", "mobile."):
+                    if dom.startswith(pre):
+                        dom = dom[len(pre):]
+                job["site"] = "" if dom in ("na", "none") else dom
+            elif line.startswith(P_THUMB):
+                th = line[len(P_THUMB):].strip()
+                job["thumb"] = th if th.lower().startswith(("http://", "https://")) else ""
             elif line.startswith(P_DONE):
                 job["filepath"] = line[len(P_DONE):]
             elif line.startswith(P_PROG):

@@ -1,11 +1,13 @@
 import json
 import locale
+import re
 import threading
 
 from . import paths
 
 DEFAULTS = {
     "theme": "dark",            # dark / light / system
+    "accent": "#ff8a3d",        # アクセントカラー（#rrggbb）
     "language": "auto",         # auto / ja / en
     "download_dir": "",         # 空ならデフォルト
     "format": "mp4",            # mp4 / mp3
@@ -60,6 +62,8 @@ class Settings:
             return isinstance(value, bool)
         if key == "download_dir":
             return isinstance(value, str)
+        if key == "accent":
+            return isinstance(value, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", value) is not None
         return False
 
     def get(self, key):

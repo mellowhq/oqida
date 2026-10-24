@@ -1,14 +1,15 @@
 # OQIDA
 
-YouTubeのURLを貼って、MP4またはMP3で保存するWindows用デスクトップソフト。
+動画のURLを貼って、MP4またはMP3で保存するWindows用デスクトップソフト。YouTube、X（Twitter）、TikTok、Instagram、ニコニコ動画など、yt-dlp が対応するサイトで使えます。
 内部で [yt-dlp](https://github.com/yt-dlp/yt-dlp) と [FFmpeg](https://ffmpeg.org/) を使用しています。
 
-A Windows desktop app that saves a YouTube URL as MP4 or MP3. Powered by yt-dlp and FFmpeg.
+A Windows desktop app that saves a video URL as MP4 or MP3. Works with YouTube, X (Twitter), TikTok, Instagram and other sites supported by yt-dlp.
 
 ## 機能
 
-- URLを貼って MP4 / MP3 を選ぶだけで保存（画質・音質の指定、複数のキュー対応）
-- テーマ切り替え（ダーク / ライト / システム）
+- URLを貼って MP4 / MP3 を選ぶだけで保存（画質・音質の指定、複数のキュー対応、サムネイル表示）
+- YouTube 以外にも、X（Twitter）・TikTok など多数のサイトに対応
+- テーマ切り替え（ダーク / ライト / システム）とアクセントカラーの変更
 - 表示言語の切り替え（日本語 / English）
 - アプリ内アップデート（設定 → アップデート）
 - yt-dlp の自動更新
@@ -19,7 +20,7 @@ A Windows desktop app that saves a YouTube URL as MP4 or MP3. Powered by yt-dlp 
 [Releases](https://github.com/mellowhq/oqida/releases) から最新の `OQIDA-x.y.z-Setup.exe` をダウンロードして実行します。
 管理者権限は不要です。
 
-初回起動時のみ、yt-dlp・FFmpeg・Deno を自動でダウンロードします（約250MB）。
+初回起動時のみ、yt-dlp・FFmpeg・Deno（YouTube対応に使用）を自動でダウンロードします（約250MB）。
 署名のない実行ファイルのため、初回は Windows SmartScreen の警告が表示されることがあります。
 
 ## 使い方
@@ -29,7 +30,8 @@ A Windows desktop app that saves a YouTube URL as MP4 or MP3. Powered by yt-dlp 
 3. 「ダウンロード」を押す
 
 保存先やテーマ、言語、アップデートは「設定」から変更できます。
-YouTube側の仕様変更で保存できなくなった場合は、設定の「yt-dlp」から更新してください。
+サイト側の仕様変更で保存できなくなった場合は、設定の「yt-dlp」から更新してください。
+ログインが必要な投稿や、ボット確認が出る場合は、設定の「ブラウザのCookie」でログイン済みのブラウザを選ぶと保存できることがあります。
 
 ## 開発
 

@@ -55,6 +55,10 @@ def test_classify_error():
     assert downloader.classify_error("ERROR: Video unavailable") == "unavailable"
     assert downloader.classify_error("ERROR: Private video") == "private"
     assert downloader.classify_error("???") == "unknown"
+    assert downloader.classify_error("ERROR: [twitter] 1: NSFW tweet requires authentication") == "login"
+    assert downloader.classify_error("ERROR: [Instagram] x: Requested content is not available, rate-limit reached or login required") == "login"
+    assert downloader.classify_error("ERROR: [twitter] 1: No video could be found in this tweet") == "no_video"
+    assert downloader.classify_error("ERROR: Sign in to confirm you're not a bot") == "bot_check"
 
 
 def test_build_args_mp4_mp3():
@@ -82,6 +86,8 @@ def test_download_mp4(engine, media_server, tmp_path):
     assert j["status"] == "done", j
     assert j["filepath"].endswith(".mp4") and os.path.getsize(j["filepath"]) > 1000
     assert j["percent"] == 100.0
+    assert j["title"] == "sample"
+    assert j["site"] == "127.0.0.1"
 
 
 def test_download_mp3(engine, media_server, tmp_path):
@@ -122,3 +128,12 @@ def test_tools_paths_windows_layout(monkeypatch, tmp_path):
     # Windows以外ではPATH探索になるので、binにあれば優先されることだけ確認
     (b / "yt-dlp").write_text("x")
     assert tools.ytdlp_path() == str(b / "yt-dlp")
+
+
+def test_accent_setting():
+    s = Settings()
+    s.set("accent", "#12aBcD")
+    assert Settings().get("accent") == "#12aBcD"
+    for bad in ("red", "#12345", "#gggggg", 123, "#1234567"):
+        with pytest.raises(ValueError):
+            s.set("accent", bad)

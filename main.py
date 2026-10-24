@@ -1,4 +1,4 @@
-"""OQIDA - YouTubeのURLからMP4/MP3を保存する個人用ソフト。"""
+"""OQIDA - 動画のURLからMP4/MP3を保存する個人用ソフト。"""
 import json
 import os
 import subprocess

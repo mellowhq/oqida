@@ -4,10 +4,14 @@ const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 
 let api = null;
 let S = null;            // 最新の状態
-let view = "main";
 let busyPoll = false;
 const rows = new Map();  // jobId -> 行の要素
 const mq = window.matchMedia("(prefers-color-scheme: dark)");
+
+const SWATCHES = [
+  ["#ff8a3d", "acc_orange"], ["#4c8dff", "acc_blue"], ["#2fd08a", "acc_green"], ["#f0619d", "acc_pink"],
+  ["#9b7bff", "acc_purple"], ["#ef5350", "acc_red"], ["#d9d9de", "acc_mono"],
+];
 
 /* ---------------- 表示ヘルパー ---------------- */
 function fmtBytes(n) {
@@ -31,11 +35,57 @@ function toast(msg, isErr) {
   toastTimer = setTimeout(() => (el.hidden = true), 3200);
 }
 
+/* ---------------- 色（アクセント） ---------------- */
+function hexToRgb(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+function rgbToHex(r, g, b) { return "#" + [r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join(""); }
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2;
+  let h = 0, s = 0;
+  if (mx !== mn) {
+    const d = mx - mn;
+    s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+    h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    h /= 6;
+  }
+  return [h, s, l];
+}
+function hslToRgb(h, s, l) {
+  if (s === 0) return [l * 255, l * 255, l * 255];
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q;
+  const f = (t) => { t = (t + 1) % 1; return t < 1 / 6 ? p + (q - p) * 6 * t : t < 1 / 2 ? q : t < 2 / 3 ? p + (q - p) * (2 / 3 - t) * 6 : p; };
+  return [f(h + 1 / 3) * 255, f(h) * 255, f(h - 1 / 3) * 255];
+}
+function luminance([r, g, b]) {
+  const c = [r, g, b].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+}
+/* 選んだ色を、テーマに合わせて読みやすい明るさに調整する */
+function adaptAccent(hex, theme) {
+  const [h, s, l] = rgbToHsl(...hexToRgb(hex));
+  const l2 = theme === "light" ? Math.min(l, 0.4) : Math.max(l, 0.56);
+  return hslToRgb(h, s, l2);
+}
+function applyAccent() {
+  const hex = S && S.settings.accent ? S.settings.accent : "#ff8a3d";
+  const theme = document.documentElement.dataset.theme;
+  const rgb = adaptAccent(hex, theme);
+  const [r, g, b] = rgb.map(Math.round);
+  const st = document.documentElement.style;
+  st.setProperty("--accent", rgbToHex(r, g, b));
+  st.setProperty("--accent-ink", luminance(rgb) > 0.38 ? "#111113" : "#ffffff");
+  const k = theme === "light" ? 0.7 : 1;
+  st.setProperty("--glow", `rgba(${r},${g},${b},${0.55 * k})`);
+  st.setProperty("--glow-soft", `rgba(${r},${g},${b},${0.22 * k})`);
+  st.setProperty("--glow-faint", `rgba(${r},${g},${b},${0.10 * k})`);
+}
+
 /* ---------------- テーマ・言語 ---------------- */
 function applyTheme() {
   const th = S ? S.settings.theme : "dark";
   const eff = th === "system" ? (mq.matches ? "dark" : "light") : th;
   document.documentElement.dataset.theme = eff;
+  applyAccent();
 }
 function applyLang() {
   const st = S && S.settings;
@@ -44,46 +94,74 @@ function applyLang() {
   setLang(l);
   $$("[data-i18n]").forEach((el) => (el.textContent = t(el.dataset.i18n)));
   $$("[data-i18n-ph]").forEach((el) => (el.placeholder = t(el.dataset.i18nPh)));
+  $$("[data-i18n-title]").forEach((el) => (el.title = t(el.dataset.i18nTitle)));
+  $$(".swatch[data-name]").forEach((el) => (el.title = t(el.dataset.name)));
 }
 mq.addEventListener("change", applyTheme);
 
 /* ---------------- 画面切り替え ---------------- */
 function showView(v) {
-  view = v;
-  $$(".tab").forEach((b) => b.classList.toggle("is-active", b.dataset.view === v));
+  $$(".nav-item").forEach((b) => b.classList.toggle("is-active", b.dataset.view === v));
   $$(".view").forEach((s) => s.classList.toggle("is-active", s.id === "view-" + v));
   $("main").scrollTop = 0;
 }
-$$(".tab").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
-$("#updateBannerBtn").addEventListener("click", () => {
-  showView("settings");
-  $("#grpUpdate").scrollIntoView({ block: "start" });
-});
+$$(".nav-item").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
 
-/* ---------------- 設定のセグメント ---------------- */
-$$(".seg[data-setting]").forEach((seg) => {
-  seg.addEventListener("click", async (e) => {
-    const btn = e.target.closest("button");
-    if (!btn) return;
-    const key = seg.dataset.setting;
-    const val = seg.dataset.bool ? btn.dataset.value === "true" : btn.dataset.value;
+/* ---------------- 設定の入力部品 ---------------- */
+$$("[data-setting]").forEach((el) => {
+  el.addEventListener("change", async () => {
+    const key = el.dataset.setting;
+    const val = el.type === "checkbox" ? el.checked : el.value;
     S.settings[key] = val;
-    renderSettings();
     if (key === "theme") applyTheme();
-    if (key === "language") { applyLang(); renderAll(); }
+    if (key === "language") applyLang();
+    renderAll();
     await api.set_setting(key, val);
   });
 });
+
+function buildSwatches() {
+  const box = $("#swatches");
+  const custom = $("#customSwatch");
+  SWATCHES.forEach(([hex, name]) => {
+    const b = document.createElement("button");
+    b.className = "swatch"; b.style.setProperty("--c", hex); b.dataset.hex = hex; b.dataset.name = name;
+    b.addEventListener("click", () => setAccent(hex));
+    box.insertBefore(b, custom);
+  });
+  const picker = $("#accentPicker");
+  picker.addEventListener("input", () => { S.settings.accent = picker.value; applyAccent(); renderSwatches(); });
+  picker.addEventListener("change", () => setAccent(picker.value));
+}
+async function setAccent(hex) {
+  S.settings.accent = hex.toLowerCase();
+  applyAccent(); renderSwatches();
+  await api.set_setting("accent", hex.toLowerCase());
+}
+function renderSwatches() {
+  const cur = (S.settings.accent || "").toLowerCase();
+  let preset = false;
+  $$(".swatch[data-hex]").forEach((b) => {
+    const on = b.dataset.hex === cur;
+    b.classList.toggle("is-on", on);
+    preset = preset || on;
+  });
+  $("#customSwatch").classList.toggle("is-on", !preset);
+  $("#accentPicker").value = cur || "#ff8a3d";
+}
+
 function renderSettings() {
   const st = S.settings;
-  $$(".seg[data-setting]").forEach((seg) => {
-    const cur = String(st[seg.dataset.setting]);
-    $$("button", seg).forEach((b) => b.classList.toggle("is-on", b.dataset.value === cur));
+  $$("[data-setting]").forEach((el) => {
+    const v = st[el.dataset.setting];
+    if (el.type === "checkbox") el.checked = !!v;
+    else if (el.value !== String(v)) el.value = String(v);
   });
   $("#ctlMp4").hidden = st.format !== "mp4";
   $("#ctlMp3").hidden = st.format !== "mp3";
   $("#folderPath").textContent = st.download_dir_effective;
   $("#folderPath").title = st.download_dir_effective;
+  renderSwatches();
 }
 
 /* ---------------- ダウンロード操作 ---------------- */
@@ -99,7 +177,7 @@ $("#startBtn").addEventListener("click", startDownload);
 $("#urlInput").addEventListener("keydown", (e) => { if (e.key === "Enter") startDownload(); });
 $("#pasteBtn").addEventListener("click", async () => {
   const txt = await api.paste_clipboard();
-  if (txt) { $("#urlInput").value = txt.split(/\s+/)[0]; }
+  if (txt) $("#urlInput").value = txt.split(/\s+/)[0];
   $("#urlInput").focus();
 });
 $("#folderChange").addEventListener("click", async () => { await api.pick_folder(); await poll(); });
@@ -107,13 +185,16 @@ $("#folderOpen").addEventListener("click", () => api.open_download_dir());
 $("#clearBtn").addEventListener("click", async () => { await api.clear_finished(); await poll(); });
 $("#dataDirBtn").addEventListener("click", () => api.open_data_dir());
 
-/* ---------------- キュー ---------------- */
+/* ---------------- 一覧 ---------------- */
 function makeRow(job) {
   const el = document.createElement("div");
   el.className = "job";
-  el.innerHTML = '<div class="tag"></div><div class="title"></div><div class="acts"></div>' +
-    '<div class="meta"><span class="state"></span><span class="mono speed"></span><span class="mono eta"></span></div>' +
-    '<div class="bar"><i></i></div>';
+  el.innerHTML = '<div class="thumb"><img alt="" referrerpolicy="no-referrer"><span class="fmt"></span></div>' +
+    '<div class="info"><div class="title"></div>' +
+    '<div class="meta"><span class="site"></span><span class="state"></span><span class="num speed"></span><span class="num eta"></span></div>' +
+    '<div class="bar"><i></i></div></div><div class="acts"></div>';
+  const img = $("img", el);
+  img.addEventListener("error", () => (img.hidden = true));
   el.dataset.id = job.id;
   return el;
 }
@@ -144,14 +225,19 @@ function renderJobs() {
     if (q.children[idx] !== el) q.insertBefore(el, q.children[idx] || null);
     const converting = job.status === "running" && job.percent >= 95;
     el.dataset.status = job.status;
-    $(".tag", el).textContent = job.fmt.toUpperCase();
+    $(".fmt", el).textContent = job.fmt.toUpperCase();
+    const img = $("img", el);
+    if (job.thumb && img.dataset.src !== job.thumb) { img.dataset.src = job.thumb; img.hidden = false; img.src = job.thumb; }
+    if (!job.thumb) img.hidden = true;
     $(".title", el).textContent = job.title || job.url;
     $(".title", el).title = job.title || job.url;
+    $(".site", el).textContent = job.site || "";
     let state = t("st_" + (converting ? "converting" : job.status));
     if (job.status === "error") state = t("e_" + (job.error || "unknown"));
     $(".state", el).textContent = state;
-    $(".speed", el).textContent = job.status === "running" && !converting ? fmtSpeed(job.speed) : "";
-    $(".eta", el).textContent = job.status === "running" && !converting ? fmtEta(job.eta) : "";
+    const live = job.status === "running" && !converting;
+    $(".speed", el).textContent = live ? fmtSpeed(job.speed) : "";
+    $(".eta", el).textContent = live ? fmtEta(job.eta) : "";
     const bar = $(".bar", el);
     $("i", bar).style.width = job.percent.toFixed(1) + "%";
     bar.classList.toggle("busy", converting || job.status === "queued");
@@ -161,7 +247,8 @@ function renderJobs() {
   const doneCount = jobs.filter((j) => !["queued", "running"].includes(j.status)).length;
   $("#clearBtn").hidden = doneCount === 0;
   $("#emptyBox").hidden = jobs.length > 0;
-  $("#queueLabel").textContent = t("queue") + (jobs.length ? "  " + jobs.length : "");
+  $(".list-head").hidden = jobs.length === 0;
+  $("#queueLabel").textContent = t("queue") + (jobs.length ? " (" + jobs.length + ")" : "");
 }
 
 /* ---------------- 初回セットアップ ---------------- */
@@ -231,10 +318,8 @@ function renderUpdates() {
   const yb = $("#ytUpdBtn");
   yb.textContent = t(ybtn); yb.disabled = ydis; yb.dataset.mode = y.state;
 
-  // バナー
-  const show = ["available", "downloading", "ready"].includes(a.state);
-  $("#updateBanner").hidden = !show;
-  if (show) $("#updateBannerText").textContent = t("banner_text", { v: a.latest });
+  $("#navDot").hidden = !["available", "downloading", "ready"].includes(a.state);
+  $("#navDot").title = t("nav_update");
   $("#verLabel").textContent = "v" + S.version;
 }
 $("#appUpdBtn").addEventListener("click", async () => {
@@ -281,6 +366,7 @@ async function poll() {
   busyPoll = true;
   try {
     const prevLang = S && S.settings.language_effective;
+    const prevAccent = S && S.settings.accent;
     S = await api.get_state();
     if (S.settings.language_effective !== prevLang) applyLang();
     applyTheme();
@@ -292,6 +378,7 @@ async function poll() {
 async function init() {
   api = window.pywebview.api;
   S = await api.get_state();
+  buildSwatches();
   const qs = new URLSearchParams(location.search);
   if (qs.get("view")) showView(qs.get("view"));
   applyTheme(); applyLang(); renderAll();
