@@ -181,7 +181,7 @@ select option { background: var(--surface); color: var(--text); }
 .meta .fit:not(:empty)::before { content: "· "; }
 
 /* v0.5 */
-.fld .sw { height: 38px; display: flex; align-items: center; }
+.fld .sw { height: 38px; display: flex; align-items: center; }   /* ドロップダウンと高さを合わせる入れ物。スイッチ自体の大きさは .switch のまま */
 .modal-card.wide { width: min(720px, 92vw); }
 .modal-card .small { margin: 0 0 12px; font-size: 12.5px; }
 .logbox { margin: 0 0 18px; padding: 12px 14px; max-height: 46vh; overflow: auto; border-radius: 8px; background: var(--bg); border: 1px solid var(--line);
