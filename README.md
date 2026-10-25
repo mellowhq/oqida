@@ -1,7 +1,7 @@
 # OQIDA
 
 動画のURLを貼って、MP4またはMP3で保存するWindows用デスクトップソフト。YouTube、X（Twitter）、TikTok、Instagram、ニコニコ動画など、yt-dlp が対応するサイトで使えます。
-対応サイト一覧は[こちら](supportedsites.md)
+対応サイト一覧は[こちら](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)
 内部で [yt-dlp](https://github.com/yt-dlp/yt-dlp) と [FFmpeg](https://ffmpeg.org/) を使用しています。
 
 A Windows desktop app that saves a video URL as MP4 or MP3. Works with YouTube, X (Twitter), TikTok, Instagram and other sites supported by yt-dlp.
