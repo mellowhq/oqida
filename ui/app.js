@@ -361,6 +361,7 @@ function clearPreview() {
   pvForUrl = "";
   $("#previewCard").hidden = true;
   $("#pvLoading").hidden = true;
+  $("#startBtn").disabled = false;
 }
 function durText(sec) {
   if (!sec && sec !== 0) return "";
@@ -379,10 +380,12 @@ async function loadPreview(url) {
   pvForUrl = url;
   $("#previewCard").hidden = true;
   $("#pvLoading").hidden = false;
+  $("#startBtn").disabled = true;
   let info;
   try { info = await api.preview_url(url); } catch (e) { info = { ok: false }; }
   if (seq !== pvSeq || $("#urlInput").value.trim() !== url) return;   // 入力が変わっていたら無視
   $("#pvLoading").hidden = true;
+  $("#startBtn").disabled = false;
   if (!info || !info.ok) { clearPreview(); applyQualityOptions(null); return; }  // 失敗時は静かに閉じる（DLは試せる）
   if (info.playlist) {
     $("#pvThumb").parentElement.style.display = "none";
