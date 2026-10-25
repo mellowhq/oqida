@@ -159,6 +159,7 @@ function renderSettings() {
   });
   $("#ctlMp4").hidden = st.format !== "mp4";
   $("#ctlMp3").hidden = st.format !== "mp3";
+  ["ctlGifStart", "ctlGifLen", "ctlGifWidth", "ctlGifFps", "gifNote"].forEach((id) => ($("#" + id).hidden = st.format !== "gif"));
   $("#folderPath").textContent = st.download_dir_effective;
   $("#folderPath").title = st.download_dir_effective;
   renderSwatches();
@@ -169,7 +170,8 @@ async function startDownload() {
   const input = $("#urlInput");
   const url = input.value.trim();
   if (!url) { toast(t("e_bad_url"), true); input.focus(); return; }
-  const r = await api.add_download(url);
+  const gif = S.settings.format === "gif" ? { start: $("#gifStart").value, length: $("#gifLen").value } : null;
+  const r = await api.add_download(url, gif);
   if (r.ok) { input.value = ""; await poll(); }
   else toast(t("e_" + (r.error || "bad_url")), true);
 }
@@ -185,7 +187,7 @@ $("#folderOpen").addEventListener("click", () => api.open_download_dir());
 $("#clearBtn").addEventListener("click", async () => { await api.clear_finished(); await poll(); });
 $("#dataDirBtn").addEventListener("click", () => api.open_data_dir());
 
-/* ---------------- 一覧 ---------------- */
+/* ---------------- 一覧（ダウンロードとGIF変換で、それぞれ別の一覧に出す） ---------------- */
 function makeRow(job) {
   const el = document.createElement("div");
   el.className = "job";
@@ -214,42 +216,83 @@ function setActions(el, job) {
   if (job.status !== "running") add(t("act_remove"), () => after(api.remove(id)));
   el.dataset.acted = job.status + "|" + LANG;
 }
-function renderJobs() {
-  const jobs = S.jobs;
-  const q = $("#queue");
-  const seen = new Set();
+function updateRow(el, job) {
+  const converting = job.status === "running" && (job.stage === "convert" || job.percent >= 95);
+  el.dataset.status = job.status;
+  $(".fmt", el).textContent = job.fmt.toUpperCase();
+  const img = $("img", el);
+  if (job.thumb && img.dataset.src !== job.thumb) { img.dataset.src = job.thumb; img.hidden = false; img.src = job.thumb; }
+  if (!job.thumb) img.hidden = true;
+  $(".title", el).textContent = job.title || job.url;
+  $(".title", el).title = job.title || job.url;
+  $(".site", el).textContent = job.site || "";
+  let state = t("st_" + (converting ? "converting" : job.status));
+  if (job.status === "error") state = t("e_" + (job.error || "unknown"));
+  $(".state", el).textContent = state;
+  const live = job.status === "running" && !converting;
+  $(".speed", el).textContent = live ? fmtSpeed(job.speed) : "";
+  $(".eta", el).textContent = live ? fmtEta(job.eta) : "";
+  const bar = $(".bar", el);
+  $("i", bar).style.width = job.percent.toFixed(1) + "%";
+  bar.classList.toggle("busy", converting || job.status === "queued");
+  if (el.dataset.acted !== job.status + "|" + LANG) setActions(el, job);
+}
+function syncList(container, jobs, seen) {
   jobs.forEach((job, idx) => {
     seen.add(job.id);
     let el = rows.get(job.id);
     if (!el) { el = makeRow(job); rows.set(job.id, el); }
-    if (q.children[idx] !== el) q.insertBefore(el, q.children[idx] || null);
-    const converting = job.status === "running" && job.percent >= 95;
-    el.dataset.status = job.status;
-    $(".fmt", el).textContent = job.fmt.toUpperCase();
-    const img = $("img", el);
-    if (job.thumb && img.dataset.src !== job.thumb) { img.dataset.src = job.thumb; img.hidden = false; img.src = job.thumb; }
-    if (!job.thumb) img.hidden = true;
-    $(".title", el).textContent = job.title || job.url;
-    $(".title", el).title = job.title || job.url;
-    $(".site", el).textContent = job.site || "";
-    let state = t("st_" + (converting ? "converting" : job.status));
-    if (job.status === "error") state = t("e_" + (job.error || "unknown"));
-    $(".state", el).textContent = state;
-    const live = job.status === "running" && !converting;
-    $(".speed", el).textContent = live ? fmtSpeed(job.speed) : "";
-    $(".eta", el).textContent = live ? fmtEta(job.eta) : "";
-    const bar = $(".bar", el);
-    $("i", bar).style.width = job.percent.toFixed(1) + "%";
-    bar.classList.toggle("busy", converting || job.status === "queued");
-    if (el.dataset.acted !== job.status + "|" + LANG) setActions(el, job);
+    if (container.children[idx] !== el) container.insertBefore(el, container.children[idx] || null);
+    updateRow(el, job);
   });
-  for (const [id, el] of rows) if (!seen.has(id)) { el.remove(); rows.delete(id); }
-  const doneCount = jobs.filter((j) => !["queued", "running"].includes(j.status)).length;
-  $("#clearBtn").hidden = doneCount === 0;
-  $("#emptyBox").hidden = jobs.length > 0;
-  $(".list-head").hidden = jobs.length === 0;
-  $("#queueLabel").textContent = t("queue") + (jobs.length ? " (" + jobs.length + ")" : "");
 }
+const isDone = (j) => !["queued", "running"].includes(j.status);
+function renderJobs() {
+  const dl = S.jobs.filter((j) => j.kind !== "convert");
+  const cv = S.jobs.filter((j) => j.kind === "convert");
+  const seen = new Set();
+  syncList($("#queue"), dl, seen);
+  syncList($("#cvQueue"), cv, seen);
+  for (const [id, el] of rows) if (!seen.has(id)) { el.remove(); rows.delete(id); }
+  $("#clearBtn").hidden = !dl.some(isDone);
+  $("#emptyBox").hidden = dl.length > 0;
+  $("#dlHead").hidden = dl.length === 0;
+  $("#queueLabel").textContent = t("queue") + (dl.length ? " (" + dl.length + ")" : "");
+  $("#cvClear").hidden = !cv.some(isDone);
+  $("#cvHead").hidden = cv.length === 0;
+  $("#cvLabel").textContent = t("cv_list") + (cv.length ? " (" + cv.length + ")" : "");
+}
+
+/* ---------------- GIF変換（パソコン内の動画） ---------------- */
+let cvFile = null;   // 選んだファイル { path, name, duration }
+function fmtDur(sec) {
+  const s = Math.round(sec), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(r).padStart(2, "0");
+}
+function setCvFile(info) {
+  if (!info || !info.ok) { if (info && info.error && info.error !== "canceled") toast(t("e_" + (info.error === "bad_file" ? "bad_file" : "drop_na")), true); return; }
+  cvFile = info;
+  $("#cvFileName").textContent = info.name;
+  $("#cvFileName").title = info.path;
+  $("#cvFileMeta").textContent = info.duration ? t("cv_len", { d: fmtDur(info.duration) }) : "";
+  $("#cvDrop").classList.add("has-file");
+  $("#cvGo").disabled = false;
+}
+$("#cvPick").addEventListener("click", async () => setCvFile(await api.pick_video()));
+$("#cvGo").addEventListener("click", async () => {
+  if (!cvFile) { toast(t("cv_pick_first"), true); return; }
+  const r = await api.convert_gif(cvFile.path, { start: $("#cvStart").value, length: $("#cvLen").value });
+  if (r.ok) await poll(); else toast(t("e_" + (r.error || "convert")), true);
+});
+$("#cvClear").addEventListener("click", async () => { await api.clear_finished(); await poll(); });
+// 動画ファイルをウィンドウに落としたとき、ブラウザが勝手にそのファイルを開かないようにする。
+// 実際のファイルの場所は、アプリ本体(Python)側が受け取って window.onFileDropped で知らせる。
+["dragover", "drop"].forEach((ev) => window.addEventListener(ev, (e) => e.preventDefault()));
+const dz = $("#cvDrop");
+dz.addEventListener("dragenter", () => dz.classList.add("over"));
+dz.addEventListener("dragleave", () => dz.classList.remove("over"));
+dz.addEventListener("drop", () => dz.classList.remove("over"));
+window.onFileDropped = (info) => { showView("gif"); setCvFile(info); };
 
 /* ---------------- 初回セットアップ ---------------- */
 const PART_NAMES = { ytdlp: "yt-dlp", ffmpeg: "ffmpeg", deno: "Deno" };
@@ -322,6 +365,45 @@ function renderUpdates() {
   $("#navDot").title = t("nav_update");
   $("#verLabel").textContent = "v" + S.version;
 }
+/* ---------------- 起動時のアップデート確認 ---------------- */
+let updPrompted = false;   // この起動中に聞いたか
+let updAccepted = false;   // 「更新する」を選んだか
+let updApplying = false;
+function renderUpdDialog() {
+  const a = S.app_update;
+  const dlg = $("#updDialog");
+  // 最初のセットアップ中は聞かない。終わってから聞く。
+  if (!updPrompted && !updAccepted && a.state === "available" && S.setup.missing.length === 0) {
+    updPrompted = true;
+    dlg.hidden = false;
+  }
+  if (dlg.hidden || !updAccepted) return;
+  const prog = $("#updProg");
+  if (a.state === "downloading") {
+    const p = a.total ? Math.floor((a.done / a.total) * 100) : 0;
+    $("#updMsg").textContent = t("upd_downloading", { p });
+    prog.hidden = false; $("i", prog).style.width = p + "%";
+  } else if (a.state === "ready" && !updApplying) {
+    updApplying = true;
+    $("#updMsg").textContent = t("upd_restarting");
+    api.apply_app_update().then((r) => {
+      if (r && r.error === "busy") { toast(t("u_busy"), true); dlg.hidden = true; updApplying = false; }
+    });
+  } else if (a.state === "error") {
+    $("#updMsg").textContent = a.error === "dev_mode" ? t("u_dev") : t("u_error");
+    prog.hidden = true;
+    $("#updNow").hidden = true; $("#updLater").hidden = false; $("#updLater").disabled = false;
+  }
+}
+$("#updLater").addEventListener("click", () => { $("#updDialog").hidden = true; });
+$("#updNow").addEventListener("click", async () => {
+  updAccepted = true;
+  $("#updNow").hidden = true; $("#updLater").disabled = true;
+  $("#updMsg").textContent = t("upd_downloading", { p: 0 });
+  await api.download_app_update();
+  await poll();
+});
+
 $("#appUpdBtn").addEventListener("click", async () => {
   const m = $("#appUpdBtn").dataset.mode;
   if (m === "available") await api.download_app_update();
@@ -359,7 +441,7 @@ function renderParts() {
 
 /* ---------------- 全体 ---------------- */
 function renderAll() {
-  renderSettings(); renderJobs(); renderSetup(); renderUpdates(); renderParts();
+  renderSettings(); renderJobs(); renderSetup(); renderUpdates(); renderParts(); renderUpdDialog();
 }
 async function poll() {
   if (busyPoll) return;

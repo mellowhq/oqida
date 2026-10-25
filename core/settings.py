@@ -10,9 +10,11 @@ DEFAULTS = {
     "accent": "#ff8a3d",        # アクセントカラー（#rrggbb）
     "language": "auto",         # auto / ja / en
     "download_dir": "",         # 空ならデフォルト
-    "format": "mp4",            # mp4 / mp3
+    "format": "mp4",            # mp4 / mp3 / gif
     "mp4_quality": "best",      # best / 1080 / 720 / 480
     "mp3_bitrate": "320",       # 320 / 192 / 128
+    "gif_width": "480",         # 320 / 480 / 640
+    "gif_fps": "15",            # 10 / 15 / 20
     "cookies_browser": "none",  # none / edge / chrome / firefox
     "auto_check_app": True,
     "auto_update_ytdlp": True,
@@ -21,9 +23,11 @@ DEFAULTS = {
 CHOICES = {
     "theme": {"dark", "light", "system"},
     "language": {"auto", "ja", "en"},
-    "format": {"mp4", "mp3"},
+    "format": {"mp4", "mp3", "gif"},
     "mp4_quality": {"best", "1080", "720", "480"},
     "mp3_bitrate": {"320", "192", "128"},
+    "gif_width": {"320", "480", "640"},
+    "gif_fps": {"10", "15", "20"},
     "cookies_browser": {"none", "edge", "chrome", "firefox"},
 }
 

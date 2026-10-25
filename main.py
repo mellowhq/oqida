@@ -6,6 +6,7 @@ import sys
 import threading
 
 from core import downloader, paths, tools
+from core import gif as gifmod
 from core.settings import Settings
 from core.updater import AppUpdater, YtdlpUpdater
 from core.version import APP_NAME, __version__
@@ -99,14 +100,55 @@ class Api:
         return _read_clipboard()
 
     # ------------------------------------------------------------ ダウンロード
-    def add_download(self, url):
+    def add_download(self, url, gif=None):
         s = self._settings
         try:
-            jid = self._engine.add(url, s.get("format"), s.get("mp4_quality"), s.get("mp3_bitrate"),
-                                   s.download_dir())
+            fmt = s.get("format")
+            g = None
+            if fmt == "gif":
+                gi = gif or {}
+                g = {"start": gi.get("start", ""), "length": gi.get("length", "10"),
+                     "width": s.get("gif_width"), "fps": s.get("gif_fps")}
+                gifmod.validate(g["start"], g["length"], g["width"], g["fps"])   # 先に確認して、画面に理由を返す
+            jid = self._engine.add(url, fmt, s.get("mp4_quality"), s.get("mp3_bitrate"), s.download_dir(), gif=g)
             return {"ok": True, "id": jid}
         except ValueError as e:
             return {"ok": False, "error": str(e)}
+
+    # ------------------------------------------------------------ GIF変換（パソコン内の動画）
+    def pick_video(self):
+        import webview
+        fd = getattr(webview, "FileDialog", None)
+        kind = fd.OPEN if fd is not None else webview.OPEN_DIALOG
+        types = ("動画ファイル (*.mp4;*.mov;*.mkv;*.webm;*.avi;*.m4v;*.flv;*.wmv)", "すべてのファイル (*.*)")
+        res = self._window.create_file_dialog(kind, allow_multiple=False, file_types=types)
+        if not res:
+            return {"ok": False, "error": "canceled"}
+        return self.inspect_video(res[0] if isinstance(res, (list, tuple)) else res)
+
+    def inspect_video(self, path):
+        """選んだファイルの名前と長さを返す"""
+        if not isinstance(path, str) or not os.path.isfile(path):
+            return {"ok": False, "error": "bad_file"}
+        ffdir = tools.ffmpeg_dir()
+        dur = gifmod.probe_duration(tools.ffprobe_exe(ffdir), path, tools.NO_WINDOW) if ffdir else None
+        return {"ok": True, "path": path, "name": os.path.basename(path), "duration": dur}
+
+    def convert_gif(self, path, gif=None):
+        s = self._settings
+        gi = gif or {}
+        try:
+            jid = self._engine.add_local(path, {"start": gi.get("start", ""), "length": gi.get("length", "10"),
+                                                "width": s.get("gif_width"), "fps": s.get("gif_fps")})
+            return {"ok": True, "id": jid}
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+
+    def _on_drop(self, path):
+        """ウィンドウへのドラッグ＆ドロップ（試験的）。選ばれたファイルの情報を画面へ渡す"""
+        info = self.inspect_video(path)
+        if self._window is not None:
+            self._window.evaluate_js("window.onFileDropped && window.onFileDropped(" + json.dumps(info) + ")")
 
     def cancel(self, job_id):
         self._engine.cancel(job_id)
@@ -206,6 +248,23 @@ def main():
     )
     api._window = window
     window.events.closed += lambda: api._engine.shutdown()
+
+    def bind_drop():
+        # 動画ファイルのドラッグ＆ドロップ。使えない環境では何もしない（「ファイルを選ぶ」は常に使える）
+        try:
+            from webview.dom import DOMEventHandler
+
+            def on_drop(e):
+                files = (e.get("dataTransfer") or {}).get("files") or []
+                path = files[0].get("pywebviewFullPath") if files else None
+                if path:
+                    api._on_drop(path)
+
+            window.dom.document.events.drop += DOMEventHandler(on_drop, True, True)
+        except Exception:
+            pass
+
+    window.events.loaded += bind_drop
     webview.start(private_mode=False, storage_path=str(paths.data_dir() / "webview"))
 
 

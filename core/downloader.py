@@ -2,10 +2,12 @@
 import itertools
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
 
+from . import gif as gifmod
 from . import paths, tools
 
 URL_RE = re.compile(r"^https?://\S+$", re.I)
@@ -69,7 +71,11 @@ def build_args(job, outdir, ytdlp, ffdir, deno, cookies_browser="none"):
     if cookies_browser and cookies_browser != "none":
         a += ["--cookies-from-browser", cookies_browser]
 
-    if job["fmt"] == "mp3":
+    if job["fmt"] == "gif":
+        # GIFには高画質は要らないので720p以下を、指定区間だけ取ってくる（長い動画でも速い）
+        a += ["-f", "bv*[height<=720]/b[height<=720]/bv*/b",
+              "--download-sections", gifmod.section_arg(job["gif"]), "--force-keyframes-at-cuts"]
+    elif job["fmt"] == "mp3":
         a += ["-f", "ba/b", "-x", "--audio-format", "mp3",
               "--audio-quality", f"{job['bitrate']}K",
               "--embed-metadata", "--embed-thumbnail", "--convert-thumbnails", "jpg"]
@@ -104,14 +110,39 @@ class Engine:
         threading.Thread(target=self._worker, daemon=True).start()
 
     # ---------------------------------------------------------- 公開操作
-    def add(self, url, fmt, quality, bitrate, outdir):
+    def add(self, url, fmt, quality, bitrate, outdir, gif=None):
         url = (url or "").strip()
         if not URL_RE.match(url):
             raise ValueError("bad_url")
+        if fmt == "gif":
+            if not isinstance(gif, dict):
+                raise ValueError("bad_gif")
+            gif = gifmod.validate(gif.get("start"), gif.get("length"), gif.get("width"), gif.get("fps"))
+        else:
+            gif = None
         job = {
             "id": next(self._ids), "url": url, "fmt": fmt, "quality": quality, "bitrate": bitrate,
-            "outdir": outdir, "status": "queued", "title": "", "site": "", "thumb": "", "percent": 0.0, "speed": 0.0, "eta": 0,
+            "kind": "download", "outdir": outdir, "gif": gif, "stage": "", "status": "queued", "title": "", "site": "", "thumb": "", "percent": 0.0, "speed": 0.0, "eta": 0,
             "filepath": "", "error": "", "error_detail": "", "created": time.time(),
+            "_cancel": False, "_streams": [],
+        }
+        with self._cv:
+            self._jobs.append(job)
+            self._cv.notify()
+        return job["id"]
+
+    def add_local(self, src, gif):
+        """パソコン内の動画ファイルを、そのままGIFに変換する（ダウンロードなし）。GIFは元のファイルと同じフォルダに保存。"""
+        if not isinstance(src, str) or not os.path.isfile(src):
+            raise ValueError("bad_file")
+        if not isinstance(gif, dict):
+            raise ValueError("bad_gif")
+        g = gifmod.validate(gif.get("start"), gif.get("length"), gif.get("width"), gif.get("fps"))
+        job = {
+            "id": next(self._ids), "url": src, "fmt": "gif", "quality": "", "bitrate": "", "kind": "convert",
+            "outdir": os.path.dirname(os.path.abspath(src)), "gif": g, "stage": "", "status": "queued",
+            "title": os.path.splitext(os.path.basename(src))[0], "site": "", "thumb": "", "percent": 0.0,
+            "speed": 0.0, "eta": 0, "filepath": "", "error": "", "error_detail": "", "created": time.time(),
             "_cancel": False, "_streams": [],
         }
         with self._cv:
@@ -155,8 +186,8 @@ class Engine:
         with self._cv:
             j = self._find(jid)
             if j and j["status"] in ("error", "canceled"):
-                j.update(status="queued", percent=0.0, speed=0.0, eta=0, error="", error_detail="",
-                         _cancel=False, _streams=[])
+                j.update(status="queued", stage="", percent=0.0, speed=0.0, eta=0, error="", error_detail="",
+                         filepath="", _cancel=False, _streams=[])
                 self._cv.notify()
 
     def clear_finished(self):
@@ -202,13 +233,36 @@ class Engine:
             job["error_detail"] = detail[-600:]
 
     def _run(self, job):
+        if job.get("kind") == "convert":
+            ffdir = self.tools["ffdir"]()
+            if not ffdir:
+                return self._fail(job, "tools_missing")
+            g = job["gif"]
+            return self._finish_gif(job, ffdir, src=job["url"], trim=(g["start"], g["length"]),
+                                    lo=0.0, span=99.0, fail_code="convert")
         ytdlp = self.tools["ytdlp"]()
         ffdir = self.tools["ffdir"]()
         deno = self.tools["deno"]()
         if not ytdlp or not ffdir:
             return self._fail(job, "tools_missing")
         os.makedirs(job["outdir"], exist_ok=True)
-        args = build_args(job, job["outdir"], ytdlp, ffdir, deno, self.settings.get("cookies_browser"))
+        workdir = None
+        target = job["outdir"]
+        if job["fmt"] == "gif":
+            # 途中の動画は作業フォルダに置いて、保存先にはGIFだけを出す
+            workdir = str(paths.tmp_dir() / f"gif{job['id']}_{int(time.time())}")
+            os.makedirs(workdir, exist_ok=True)
+            target = workdir
+        try:
+            self._run_ytdlp(job, ytdlp, ffdir, deno, target)
+            if job["fmt"] == "gif" and job["status"] == "running":
+                self._finish_gif(job, ffdir)
+        finally:
+            if workdir:
+                shutil.rmtree(workdir, ignore_errors=True)
+
+    def _run_ytdlp(self, job, ytdlp, ffdir, deno, outdir):
+        args = build_args(job, outdir, ytdlp, ffdir, deno, self.settings.get("cookies_browser"))
         env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
         p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
                              creationflags=tools.NO_WINDOW, stdin=subprocess.DEVNULL)
@@ -235,11 +289,60 @@ class Engine:
                 job["status"] = "canceled"
             return
         if rc == 0 and job["filepath"]:
-            with self._cv:
-                job.update(status="done", percent=100.0, speed=0.0, eta=0)
+            if job["fmt"] != "gif":      # gifはこのあと変換が残っているので、まだ完了にしない
+                with self._cv:
+                    job.update(status="done", percent=100.0, speed=0.0, eta=0)
             return
         text = "\n".join(saw_error) or "\n".join(tail)
         self._fail(job, classify_error(text), text)
+
+    def _finish_gif(self, job, ffdir, src=None, trim=None, lo=60.0, span=39.0, fail_code="ffmpeg"):
+        """動画をffmpegでGIFにする。ダウンロード後の区間動画（lo=60）にも、パソコン内の動画（lo=0）にも使う"""
+        g = job["gif"]
+        src = src or job["filepath"]
+        stem = os.path.splitext(os.path.basename(src))[0]
+        dst = gifmod.unique_path(job["outdir"], stem, ".gif")
+        args = gifmod.build_ffmpeg_args(tools.ffmpeg_exe(ffdir), src, dst, g["fps"], g["width"], trim=trim)
+        with self._cv:
+            job.update(stage="convert", speed=0.0, eta=0, status="running")
+            job["percent"] = max(job["percent"], lo)
+        p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             creationflags=tools.NO_WINDOW, stdin=subprocess.DEVNULL)
+        with self._cv:
+            self._procs[job["id"]] = p
+        tail = []
+        try:
+            for raw in p.stdout:
+                line = raw.decode("utf-8", errors="replace").strip()
+                sec = gifmod.progress_seconds(line)
+                if sec is not None:
+                    frac = min(1.0, sec / max(g["length"], 0.1))
+                    with self._cv:
+                        job["percent"] = max(job["percent"], min(99.0, lo + span * frac))
+                elif line and "=" not in line:
+                    tail.append(line)
+                    tail = tail[-8:]
+            rc = p.wait()
+        finally:
+            with self._cv:
+                self._procs.pop(job["id"], None)
+        with self._cv:
+            canceled = job["_cancel"]
+        ok = rc == 0 and os.path.exists(dst) and os.path.getsize(dst) > 0
+        if canceled or not ok:
+            try:
+                if os.path.exists(dst):
+                    os.remove(dst)
+            except OSError:
+                pass
+        if canceled:
+            with self._cv:
+                job["status"] = "canceled"
+            return
+        if not ok:
+            return self._fail(job, fail_code, "\n".join(tail))
+        with self._cv:
+            job.update(status="done", percent=100.0, speed=0.0, eta=0, filepath=dst, stage="")
 
     def _on_line(self, job, line):
         with self._cv:
@@ -267,6 +370,14 @@ class Engine:
                 if fname not in job["_streams"]:
                     job["_streams"].append(fname)
                 idx = job["_streams"].index(fname)
+                if job["fmt"] == "gif":
+                    pct = 55 * frac
+                    if status == "finished":
+                        pct = max(pct, 55)
+                    job["percent"] = max(job["percent"], min(pct, 58.0))
+                    job["speed"] = _num(speed)
+                    job["eta"] = int(_num(eta))
+                    return
                 if job["fmt"] == "mp4":
                     pct = 90 * frac if idx == 0 else 90 + 5 * frac
                 else:
@@ -278,7 +389,7 @@ class Engine:
                 job["eta"] = int(_num(eta))
             elif line.startswith(P_PP):
                 f = line[len(P_PP):].split("|", 1)
-                if len(f) == 2 and f[1] == "started":
+                if len(f) == 2 and f[1] == "started" and job["fmt"] != "gif":
                     job["status"] = "running"
                     job["speed"] = 0.0
                     job["eta"] = 0

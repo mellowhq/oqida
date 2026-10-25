@@ -48,6 +48,18 @@ def ffmpeg_dir():
     return None
 
 
+def ffmpeg_exe(ffdir):
+    """ffmpegの実行ファイルのパス"""
+    return os.path.join(ffdir, _exe("ffmpeg"))
+
+
+def ffprobe_exe(ffdir):
+    p = os.path.join(ffdir, _exe("ffprobe"))
+    if not os.path.exists(p) and not paths.IS_WINDOWS:     # 開発用: ffmpegと別の場所にある場合はPATHから探す
+        return shutil.which("ffprobe") or p
+    return p
+
+
 def deno_path():
     p = paths.bin_dir() / _exe("deno")
     if p.exists():

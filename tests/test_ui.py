@@ -8,6 +8,14 @@ UI = (Path(__file__).resolve().parent.parent / "ui" / "index.html").as_uri()
 
 
 @pytest.fixture
+def browser_only():
+    with pw.sync_playwright() as p:
+        b = p.chromium.launch()
+        yield b
+        b.close()
+
+
+@pytest.fixture
 def page():
     with pw.sync_playwright() as p:
         b = p.chromium.launch()
@@ -16,7 +24,9 @@ def page():
         errs = []
         pg.on("pageerror", lambda e: errs.append(str(e)))
         pg.goto(UI + "?mock=1&lang=ja&theme=dark")
-        pg.wait_for_timeout(600)
+        pg.wait_for_selector("#updDialog:not([hidden])")
+        pg.click("#updLater")
+        pg.wait_for_timeout(300)
         yield pg
         assert errs == []
         b.close()
@@ -123,3 +133,100 @@ def test_broken_thumbnail_is_hidden(page):
                              "eta": 0, "filepath": "x", "error": ""})
     page.wait_for_timeout(1500)
     assert page.evaluate("document.querySelector('.job img').hidden") is True
+
+
+def test_gif_format_shows_its_options_and_sends_range(page):
+    page.select_option('[data-setting=format]', "gif")
+    for sel in ("#ctlGifStart", "#ctlGifLen", "#ctlGifWidth", "#ctlGifFps", "#gifNote"):
+        assert page.is_visible(sel), sel
+    assert not page.is_visible("#ctlMp4") and not page.is_visible("#ctlMp3")
+    page.fill("#urlInput", "https://x.com/a/status/1")
+    page.fill("#gifStart", "1:30")
+    page.fill("#gifLen", "5")
+    page.click("#startBtn")
+    assert page.evaluate("window.__addCall") == ["https://x.com/a/status/1", {"start": "1:30", "length": "5"}]
+    page.select_option('[data-setting=format]', "mp4")
+    assert not page.is_visible("#ctlGifStart") and page.is_visible("#ctlMp4")
+
+
+def test_gif_job_row_is_shown_as_converting(page):
+    row = page.locator('#queue .job .fmt', has_text="GIF").locator("xpath=ancestor::div[contains(@class,'job')]")
+    assert row.locator(".state").inner_text() == "変換中"
+
+
+def _fresh(browser, query):
+    ctx = browser.new_context(viewport={"width": 1000, "height": 720}, color_scheme="dark")
+    pg = ctx.new_page()
+    errs = []
+    pg.on("pageerror", lambda e: errs.append(str(e)))
+    pg.errs = errs
+    pg.goto(UI + query)
+    return pg
+
+
+def test_startup_update_prompt_later(browser_only):
+    pg = _fresh(browser_only, "?mock=1&lang=ja&theme=dark")
+    pg.wait_for_selector("#updDialog:not([hidden])")
+    assert pg.inner_text("#updMsg") == "アップデートがあります。更新しますか？"
+    assert pg.inner_text("#updNow") == "更新する" and pg.inner_text("#updLater") == "あとで"
+    pg.click("#updLater")
+    pg.wait_for_timeout(1300)                       # 何度更新しても、今回の起動中はもう聞かない
+    assert not pg.is_visible("#updDialog")
+    assert pg.is_visible("#navDot")                 # 目印は残る
+    assert pg.errs == []
+
+
+def test_startup_update_prompt_accept_downloads_and_restarts(browser_only):
+    pg = _fresh(browser_only, "?mock=1&lang=ja&theme=dark")
+    pg.wait_for_selector("#updDialog:not([hidden])")
+    pg.click("#updNow")
+    pg.wait_for_function("window.__applied === true", timeout=8000)
+    assert pg.inner_text("#updMsg") == "再起動します…"
+    assert pg.errs == []
+
+
+def test_no_prompt_when_up_to_date_or_during_setup(browser_only):
+    pg = _fresh(browser_only, "?mock=1&lang=ja&upd=uptodate")
+    pg.wait_for_timeout(1200)
+    assert not pg.is_visible("#updDialog")
+    pg2 = _fresh(browser_only, "?mock=1&lang=ja&setup=1")        # 初回セットアップ中は聞かない
+    pg2.wait_for_timeout(1200)
+    assert not pg2.is_visible("#updDialog")
+
+
+def test_gif_convert_screen(page):
+    page.click(".nav-item[data-view=gif]")
+    assert page.is_visible("#view-gif.is-active") and page.inner_text("h1:visible") == "GIF変換"
+    assert page.is_disabled("#cvGo")                                  # ファイルを選ぶまでは押せない
+    page.click("#cvPick")
+    page.wait_for_function("document.querySelector('#cvFileName').textContent === 'clip.mp4'")
+    assert page.inner_text("#cvFileMeta") == "長さ 1:23"
+    assert not page.is_disabled("#cvGo")
+    page.fill("#cvStart", "0:30"); page.fill("#cvLen", "6")
+    page.click("#cvGo")
+    assert page.evaluate("window.__cvCall") == ["C:\\Videos\\clip.mp4", {"start": "0:30", "length": "6"}]
+
+
+def test_gif_convert_list_is_separate_from_downloads(page):
+    cv = page.eval_on_selector_all("#cvQueue .job .title", "els => els.map(e => e.textContent)")
+    dl = page.eval_on_selector_all("#queue .job .title", "els => els.map(e => e.textContent)")
+    assert cv == ["clip", "play"]
+    assert "clip" not in dl and "play" not in dl and len(dl) >= 4
+    page.click(".nav-item[data-view=gif]")
+    states = page.eval_on_selector_all("#cvQueue .job .state", "els => els.map(e => e.textContent)")
+    assert states == ["変換中", "完了"]
+
+
+def test_dropped_file_info_is_shown(page):
+    page.click(".nav-item[data-view=main]")
+    page.evaluate("window.onFileDropped({ok: true, path: 'D:\\\\a.mov', name: 'a.mov', duration: 3725})")
+    assert page.is_visible("#view-gif.is-active")                     # ドロップされたらGIF変換の画面に移る
+    assert page.inner_text("#cvFileName") == "a.mov" and page.inner_text("#cvFileMeta") == "長さ 1:02:05"
+    page.evaluate("window.onFileDropped({ok: false, error: 'bad_file'})")
+    assert page.is_visible("#toast")
+    assert page.inner_text("#cvFileName") == "a.mov"                  # 失敗しても選択済みの内容は消さない
+
+
+def test_dragging_a_file_does_not_navigate_away(page):
+    ok = page.evaluate("""() => { const e = new DragEvent('drop', {cancelable: true, bubbles: true}); window.dispatchEvent(e); return e.defaultPrevented; }""")
+    assert ok is True

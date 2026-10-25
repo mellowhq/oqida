@@ -137,3 +137,12 @@ def test_accent_setting():
     for bad in ("red", "#12345", "#gggggg", 123, "#1234567"):
         with pytest.raises(ValueError):
             s.set("accent", bad)
+
+
+def test_gif_settings():
+    s = Settings()
+    s.set("format", "gif"); s.set("gif_width", "640"); s.set("gif_fps", "20")
+    assert Settings().get("gif_width") == "640"
+    for k, v in (("gif_width", "500"), ("gif_fps", "30"), ("format", "webm")):
+        with pytest.raises(ValueError):
+            s.set(k, v)
