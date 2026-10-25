@@ -42,11 +42,11 @@ def section_arg(g) -> str:
     return f"*{g['start']:g}-{g['start'] + g['length']:g}"
 
 
-def build_ffmpeg_args(ffmpeg, src, dst, fps, width, trim=None):
+def build_ffmpeg_args(ffmpeg, src, dst, fps, width, trim=None, colors=256):
     """きれいな色になるよう、動画から色のパレットを作ってからGIFにする（palettegen / paletteuse）。
     trim=(開始秒, 長さ秒) を渡すと、元の動画のその区間だけを使う（パソコン内の動画を変換するとき用）。"""
     vf = (f"fps={fps},scale='min({width},iw)':-1:flags=lanczos,split[s0][s1];"
-          "[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5")
+          f"[s0]palettegen=max_colors={colors}:stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5")
     cut = ["-ss", f"{trim[0]:g}", "-t", f"{trim[1]:g}"] if trim else []
     return [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1",
             *cut, "-i", src, "-an", "-vf", vf, "-loop", "0", dst]
@@ -72,6 +72,18 @@ def progress_seconds(line):
             except ValueError:
                 return None
     return None
+
+
+def gif_dimensions(path):
+    """GIFファイルの先頭から (幅, 高さ) を読む。読めなければ None"""
+    try:
+        with open(path, "rb") as f:
+            h = f.read(10)
+        if h[:4] != b"GIF8" or len(h) < 10:
+            return None
+        return h[6] | (h[7] << 8), h[8] | (h[9] << 8)
+    except OSError:
+        return None
 
 
 def unique_path(folder, stem, ext):

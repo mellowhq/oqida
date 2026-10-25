@@ -60,6 +60,10 @@ const I18N = {
     cv_list: "変換一覧", cv_len: "長さ {d}", cv_pick_first: "先に動画ファイルを選んでください",
     e_bad_file: "ファイルが見つかりません", e_convert: "変換できませんでした。動画ファイルか確認してください。",
     e_drop_na: "動画ファイルを読み取れませんでした。",
+    label_gif_end: "終了", label_size_limit: "サイズ上限", size_none: "なし",
+    size_note: "上限に収まるよう、画質・音質・GIFの幅や色数などを自動で調整します（1 MBは100万バイトで計算）。収まらないときはエラーになります。",
+    fitted: "上限に合わせて調整", e_size_fail: "上限サイズに収められませんでした。長さを短くするか、上限を大きくしてください。",
+    e_bad_range: "終了は開始より後に、動画の長さ以内で指定してください。", e_len_max: "GIFの長さは最長60秒です。",
   },
   en: {
     tab_main: "Download", tab_settings: "Settings",
@@ -122,6 +126,10 @@ const I18N = {
     cv_list: "Conversions", cv_len: "Length {d}", cv_pick_first: "Choose a video file first",
     e_bad_file: "The file was not found.", e_convert: "Could not convert. Check that it is a video file.",
     e_drop_na: "Could not read the video file.",
+    label_gif_end: "End", label_size_limit: "Size limit", size_none: "None",
+    size_note: "Quality, bitrate, and GIF width or colors are adjusted automatically to fit (1 MB = 1,000,000 bytes). If it cannot fit, an error is shown.",
+    fitted: "adjusted to fit", e_size_fail: "Could not fit within the size limit. Shorten the clip or raise the limit.",
+    e_bad_range: "Set the end after the start and within the length of the video.", e_len_max: "A GIF can be 60 seconds at most.",
   },
 };
 

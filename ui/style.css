@@ -176,3 +176,6 @@ select option { background: var(--surface); color: var(--text); }
 .drop-sub { min-height: 18px; }
 .drop .btn { margin-top: 8px; }
 #view-gif .toolbar { margin-top: 18px; }
+
+.meta .fit { color: var(--dim); }
+.meta .fit:not(:empty)::before { content: "· "; }

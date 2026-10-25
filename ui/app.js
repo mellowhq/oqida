@@ -159,18 +159,84 @@ function renderSettings() {
   });
   $("#ctlMp4").hidden = st.format !== "mp4";
   $("#ctlMp3").hidden = st.format !== "mp3";
-  ["ctlGifStart", "ctlGifLen", "ctlGifWidth", "ctlGifFps", "gifNote"].forEach((id) => ($("#" + id).hidden = st.format !== "gif"));
+  ["ctlGifStart", "ctlGifEnd", "ctlGifLen", "ctlGifWidth", "ctlGifFps", "gifNote"].forEach((id) => ($("#" + id).hidden = st.format !== "gif"));
+  const limited = String(st.size_limit_mb) !== "0";
+  $("#sizeNote").hidden = !limited;
+  $("#cvSizeNote").hidden = !limited;
   $("#folderPath").textContent = st.download_dir_effective;
   $("#folderPath").title = st.download_dir_effective;
   renderSwatches();
 }
+
+/* ---------------- 開始・終了・長さの入力（どれかを変えると残りが連動する） ---------------- */
+const MIN_LEN = 0.5, MAX_LEN = 60;
+function parseTime(str) {
+  const s = String(str == null ? "" : str).trim().replace(/：/g, ":");
+  if (!s) return 0;
+  const parts = s.split(":");
+  if (parts.length > 3 || !parts.every((p) => /^\d+(\.\d+)?$/.test(p))) return NaN;
+  return parts.reduce((a, p) => a * 60 + parseFloat(p), 0);
+}
+function fmtTime(sec) {
+  const r = Math.round(sec * 10) / 10;
+  const h = Math.floor(r / 3600), m = Math.floor((r % 3600) / 60), x = r % 60;
+  const xs = Number.isInteger(x) ? String(x).padStart(2, "0") : x.toFixed(1).padStart(4, "0");
+  return h ? h + ":" + String(m).padStart(2, "0") + ":" + xs : m + ":" + xs;
+}
+const fmtLen = (sec) => String(Math.round(sec * 10) / 10);
+function makeRange(startId, endId, lenId, getDuration) {
+  const el = { s: $("#" + startId), e: $("#" + endId), l: $("#" + lenId) };
+  const v = { start: 0, len: 10 };
+  const dur = () => { const d = getDuration(); return d && d > 0 ? d : null; };
+  const show = () => {
+    el.s.value = fmtTime(v.start); el.e.value = fmtTime(v.start + v.len); el.l.value = fmtLen(v.len);
+  };
+  // 動画の長さ・最長60秒・最短0.5秒に収まるよう、開始と長さを整える
+  const fit = () => {
+    const d = dur();
+    if (d) v.start = Math.min(v.start, Math.max(0, d - MIN_LEN));
+    v.len = Math.min(MAX_LEN, Math.max(MIN_LEN, v.len));
+    if (d && v.start + v.len > d) v.len = Math.max(MIN_LEN, d - v.start);
+    if (d && v.start + v.len > d + 1e-6) v.start = Math.max(0, d - v.len);
+  };
+  el.s.addEventListener("change", () => {
+    const x = parseTime(el.s.value);
+    if (Number.isNaN(x)) { toast(t("e_bad_time"), true); show(); return; }
+    v.start = x; fit(); show();
+  });
+  el.l.addEventListener("change", () => {
+    const x = parseTime(el.l.value);
+    if (Number.isNaN(x)) { toast(t("e_bad_gif"), true); show(); return; }
+    if (x > MAX_LEN) toast(t("e_len_max"), true);
+    v.len = x; fit(); show();
+  });
+  el.e.addEventListener("change", () => {
+    let x = parseTime(el.e.value);
+    if (Number.isNaN(x)) { toast(t("e_bad_time"), true); show(); return; }
+    const d = dur();
+    if (d) x = Math.min(x, d);
+    if (x < v.start + MIN_LEN) { toast(t("e_bad_range"), true); show(); return; }
+    if (x - v.start > MAX_LEN) toast(t("e_len_max"), true);
+    v.len = x - v.start; fit(); show();
+  });
+  [el.s, el.e, el.l].forEach((i) => i.addEventListener("keydown", (ev) => { if (ev.key === "Enter") i.blur(); }));
+  show();
+  return {
+    // 送る値（秒の数字）
+    value: () => ({ start: String(Math.round(v.start * 1000) / 1000), length: String(Math.round(v.len * 1000) / 1000) }),
+    reset: () => { v.start = 0; v.len = 10; fit(); show(); },
+  };
+}
+let cvFile = null;   // GIF変換で選んだファイル { path, name, duration }
+const dlRange = makeRange("gifStart", "gifEnd", "gifLen", () => null);
+const cvRange = makeRange("cvStart", "cvEnd", "cvLen", () => (cvFile && cvFile.duration) || null);
 
 /* ---------------- ダウンロード操作 ---------------- */
 async function startDownload() {
   const input = $("#urlInput");
   const url = input.value.trim();
   if (!url) { toast(t("e_bad_url"), true); input.focus(); return; }
-  const gif = S.settings.format === "gif" ? { start: $("#gifStart").value, length: $("#gifLen").value } : null;
+  const gif = S.settings.format === "gif" ? dlRange.value() : null;
   const r = await api.add_download(url, gif);
   if (r.ok) { input.value = ""; await poll(); }
   else toast(t("e_" + (r.error || "bad_url")), true);
@@ -193,7 +259,7 @@ function makeRow(job) {
   el.className = "job";
   el.innerHTML = '<div class="thumb"><img alt="" referrerpolicy="no-referrer"><span class="fmt"></span></div>' +
     '<div class="info"><div class="title"></div>' +
-    '<div class="meta"><span class="site"></span><span class="state"></span><span class="num speed"></span><span class="num eta"></span></div>' +
+    '<div class="meta"><span class="site"></span><span class="state"></span><span class="num speed"></span><span class="num eta"></span><span class="num size"></span><span class="fit"></span></div>' +
     '<div class="bar"><i></i></div></div><div class="acts"></div>';
   const img = $("img", el);
   img.addEventListener("error", () => (img.hidden = true));
@@ -232,6 +298,8 @@ function updateRow(el, job) {
   const live = job.status === "running" && !converting;
   $(".speed", el).textContent = live ? fmtSpeed(job.speed) : "";
   $(".eta", el).textContent = live ? fmtEta(job.eta) : "";
+  $(".size", el).textContent = job.status === "done" && job.size ? (job.size / 1e6).toFixed(1) + " MB" : "";
+  $(".fit", el).textContent = job.status === "done" && job.fitted ? t("fitted") : "";
   const bar = $(".bar", el);
   $("i", bar).style.width = job.percent.toFixed(1) + "%";
   bar.classList.toggle("busy", converting || job.status === "queued");
@@ -264,7 +332,6 @@ function renderJobs() {
 }
 
 /* ---------------- GIF変換（パソコン内の動画） ---------------- */
-let cvFile = null;   // 選んだファイル { path, name, duration }
 function fmtDur(sec) {
   const s = Math.round(sec), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
   return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(r).padStart(2, "0");
@@ -272,6 +339,7 @@ function fmtDur(sec) {
 function setCvFile(info) {
   if (!info || !info.ok) { if (info && info.error && info.error !== "canceled") toast(t("e_" + (info.error === "bad_file" ? "bad_file" : "drop_na")), true); return; }
   cvFile = info;
+  cvRange.reset();
   $("#cvFileName").textContent = info.name;
   $("#cvFileName").title = info.path;
   $("#cvFileMeta").textContent = info.duration ? t("cv_len", { d: fmtDur(info.duration) }) : "";
@@ -281,7 +349,7 @@ function setCvFile(info) {
 $("#cvPick").addEventListener("click", async () => setCvFile(await api.pick_video()));
 $("#cvGo").addEventListener("click", async () => {
   if (!cvFile) { toast(t("cv_pick_first"), true); return; }
-  const r = await api.convert_gif(cvFile.path, { start: $("#cvStart").value, length: $("#cvLen").value });
+  const r = await api.convert_gif(cvFile.path, cvRange.value());
   if (r.ok) await poll(); else toast(t("e_" + (r.error || "convert")), true);
 });
 $("#cvClear").addEventListener("click", async () => { await api.clear_finished(); await poll(); });

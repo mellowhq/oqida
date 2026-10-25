@@ -135,18 +135,38 @@ def test_broken_thumbnail_is_hidden(page):
     assert page.evaluate("document.querySelector('.job img').hidden") is True
 
 
+def commit(page, sel, text):
+    page.fill(sel, text)
+    page.press(sel, "Enter")          # Enterで確定（欄から外れて、連動の計算が動く）
+
+
 def test_gif_format_shows_its_options_and_sends_range(page):
     page.select_option('[data-setting=format]', "gif")
-    for sel in ("#ctlGifStart", "#ctlGifLen", "#ctlGifWidth", "#ctlGifFps", "#gifNote"):
+    for sel in ("#ctlGifStart", "#ctlGifEnd", "#ctlGifLen", "#ctlGifWidth", "#ctlGifFps", "#gifNote", "#ctlSize"):
         assert page.is_visible(sel), sel
     assert not page.is_visible("#ctlMp4") and not page.is_visible("#ctlMp3")
     page.fill("#urlInput", "https://x.com/a/status/1")
-    page.fill("#gifStart", "1:30")
-    page.fill("#gifLen", "5")
+    commit(page, "#gifStart", "1:30")
+    assert page.input_value("#gifEnd") == "1:40" and page.input_value("#gifLen") == "10"     # 開始を変えると、終了がずれる
+    commit(page, "#gifLen", "5")
+    assert page.input_value("#gifEnd") == "1:35"                                              # 長さを変えると、終了が変わる
     page.click("#startBtn")
-    assert page.evaluate("window.__addCall") == ["https://x.com/a/status/1", {"start": "1:30", "length": "5"}]
+    assert page.evaluate("window.__addCall") == ["https://x.com/a/status/1", {"start": "90", "length": "5"}]
     page.select_option('[data-setting=format]', "mp4")
-    assert not page.is_visible("#ctlGifStart") and page.is_visible("#ctlMp4")
+    assert not page.is_visible("#ctlGifStart") and page.is_visible("#ctlMp4") and page.is_visible("#ctlSize")
+
+
+def test_end_time_sets_the_length(page):
+    page.select_option('[data-setting=format]', "gif")
+    commit(page, "#gifStart", "0:20")
+    commit(page, "#gifEnd", "0:27.5")
+    assert page.input_value("#gifLen") == "7.5" and page.input_value("#gifEnd") == "0:27.5"
+    commit(page, "#gifEnd", "0:20")                                      # 終了が開始以前 → 元に戻して知らせる
+    assert page.is_visible("#toast") and page.input_value("#gifEnd") == "0:27.5"
+    commit(page, "#gifStart", "abc")                                     # 形式が違う → 元に戻して知らせる
+    assert page.input_value("#gifStart") == "0:20"
+    commit(page, "#gifEnd", "5:00")                                      # 60秒を超える → 60秒に収める
+    assert page.input_value("#gifLen") == "60" and page.input_value("#gifEnd") == "1:20"
 
 
 def test_gif_job_row_is_shown_as_converting(page):
@@ -202,9 +222,50 @@ def test_gif_convert_screen(page):
     page.wait_for_function("document.querySelector('#cvFileName').textContent === 'clip.mp4'")
     assert page.inner_text("#cvFileMeta") == "長さ 1:23"
     assert not page.is_disabled("#cvGo")
-    page.fill("#cvStart", "0:30"); page.fill("#cvLen", "6")
+    assert (page.input_value("#cvStart"), page.input_value("#cvEnd"), page.input_value("#cvLen")) == ("0:00", "0:10", "10")
+    commit(page, "#cvStart", "0:30")
+    assert page.input_value("#cvEnd") == "0:40"
+    commit(page, "#cvLen", "6")
+    assert page.input_value("#cvEnd") == "0:36"
     page.click("#cvGo")
-    assert page.evaluate("window.__cvCall") == ["C:\\Videos\\clip.mp4", {"start": "0:30", "length": "6"}]
+    assert page.evaluate("window.__cvCall") == ["C:\\Videos\\clip.mp4", {"start": "30", "length": "6"}]
+
+
+def test_gif_range_stays_inside_the_video(page):
+    page.click(".nav-item[data-view=gif]")
+    page.click("#cvPick")
+    page.wait_for_function("document.querySelector('#cvFileName').textContent === 'clip.mp4'")   # 長さ 1:23（83秒）
+    commit(page, "#cvStart", "1:20")                                  # 残り3秒しかない → 長さが3秒に縮む
+    assert page.input_value("#cvLen") == "3" and page.input_value("#cvEnd") == "1:23"
+    commit(page, "#cvStart", "5:00")                                  # 動画の外 → 終わりの手前に収める
+    assert page.input_value("#cvStart") == "1:22.5" and page.input_value("#cvEnd") == "1:23"
+    commit(page, "#cvStart", "0:10")
+    commit(page, "#cvEnd", "9:00")                                    # 終了が動画より後 → 動画の終わりまで（ただし最長60秒）
+    assert page.input_value("#cvLen") == "60" and page.input_value("#cvEnd") == "1:10"
+    page.click("#cvGo")
+    assert page.evaluate("window.__cvCall[1]") == {"start": "10", "length": "60"}
+
+
+def test_size_limit_select_and_notes(page):
+    assert not page.is_visible("#sizeNote")
+    page.select_option("#ctlSize select", "10")
+    assert page.is_visible("#sizeNote") and "100万バイト" in page.inner_text("#sizeNote")
+    page.click(".nav-item[data-view=gif]")
+    assert page.input_value("#view-gif select[data-setting=size_limit_mb]") == "10"      # 2つの画面で同じ設定
+    assert page.is_visible("#cvSizeNote")
+    page.select_option("#view-gif select[data-setting=size_limit_mb]", "0")
+    assert not page.is_visible("#cvSizeNote")
+    assert page.eval_on_selector_all("#ctlSize option", "els => els.map(e => e.value)") == ["0", "8", "10", "25", "50", "100", "500", "1000"]
+
+
+def test_finished_rows_show_size_and_fit_note(page):
+    rows = page.eval_on_selector_all("#queue .job", """els => els.map(e => ({
+        title: e.querySelector('.title').textContent, size: e.querySelector('.size').textContent, fit: e.querySelector('.fit').textContent}))""")
+    lofi = next(r for r in rows if r["title"].startswith("Lo-fi"))
+    assert lofi["size"] == "9.4 MB" and lofi["fit"] == "上限に合わせて調整"
+    assert all(r["size"] == "" for r in rows if r is not lofi)          # 完了していない行にはサイズを出さない
+    cv = page.eval_on_selector_all("#cvQueue .job", "els => els.map(e => [e.querySelector('.size').textContent, e.querySelector('.fit').textContent])")
+    assert cv == [["", ""], ["7.8 MB", ""]]
 
 
 def test_gif_convert_list_is_separate_from_downloads(page):

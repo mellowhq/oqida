@@ -7,6 +7,7 @@ import threading
 
 from core import downloader, paths, tools
 from core import gif as gifmod
+from core import sizefit
 from core.settings import Settings
 from core.updater import AppUpdater, YtdlpUpdater
 from core.version import APP_NAME, __version__
@@ -110,7 +111,8 @@ class Api:
                 g = {"start": gi.get("start", ""), "length": gi.get("length", "10"),
                      "width": s.get("gif_width"), "fps": s.get("gif_fps")}
                 gifmod.validate(g["start"], g["length"], g["width"], g["fps"])   # 先に確認して、画面に理由を返す
-            jid = self._engine.add(url, fmt, s.get("mp4_quality"), s.get("mp3_bitrate"), s.download_dir(), gif=g)
+            jid = self._engine.add(url, fmt, s.get("mp4_quality"), s.get("mp3_bitrate"), s.download_dir(), gif=g,
+                                   size_limit=sizefit.limit_bytes(s.get("size_limit_mb")))
             return {"ok": True, "id": jid}
         except ValueError as e:
             return {"ok": False, "error": str(e)}
@@ -138,8 +140,21 @@ class Api:
         s = self._settings
         gi = gif or {}
         try:
-            jid = self._engine.add_local(path, {"start": gi.get("start", ""), "length": gi.get("length", "10"),
-                                                "width": s.get("gif_width"), "fps": s.get("gif_fps")})
+            g = {"start": gi.get("start", ""), "length": gi.get("length", "10"),
+                 "width": s.get("gif_width"), "fps": s.get("gif_fps")}
+            v = gifmod.validate(g["start"], g["length"], g["width"], g["fps"])
+            # 動画の長さを超えていたら、終わりに合わせて切り詰める。開始が動画の外なら、はっきりエラーにする
+            ffdir = tools.ffmpeg_dir() if os.path.isfile(path or "") else None
+            dur = gifmod.probe_duration(tools.ffprobe_exe(ffdir), path, tools.NO_WINDOW) if ffdir else None
+            if dur:
+                if v["start"] >= dur - 0.05:
+                    raise ValueError("bad_range")
+                if v["start"] + v["length"] > dur:
+                    v["length"] = round(dur - v["start"], 3)
+                    if v["length"] < gifmod.MIN_LENGTH:
+                        raise ValueError("bad_range")
+                g["start"], g["length"] = v["start"], v["length"]
+            jid = self._engine.add_local(path, g, size_limit=sizefit.limit_bytes(s.get("size_limit_mb")))
             return {"ok": True, "id": jid}
         except ValueError as e:
             return {"ok": False, "error": str(e)}

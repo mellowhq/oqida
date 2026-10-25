@@ -72,7 +72,11 @@
         </label>
         <label class="fld" id="ctlGifStart" hidden>
           <span data-i18n="label_gif_start"></span>
-          <input id="gifStart" type="text" inputmode="decimal" placeholder="0:00" autocomplete="off" spellcheck="false">
+          <input id="gifStart" type="text" inputmode="decimal" value="0:00" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="fld" id="ctlGifEnd" hidden>
+          <span data-i18n="label_gif_end"></span>
+          <input id="gifEnd" type="text" inputmode="decimal" value="0:10" autocomplete="off" spellcheck="false">
         </label>
         <label class="fld" id="ctlGifLen" hidden>
           <span data-i18n="label_gif_len"></span>
@@ -94,9 +98,23 @@
             <option value="20">20 fps</option>
           </select>
         </label>
+        <label class="fld" id="ctlSize">
+          <span data-i18n="label_size_limit"></span>
+          <select data-setting="size_limit_mb">
+            <option value="0" data-i18n="size_none"></option>
+            <option value="8">8 MB</option>
+            <option value="10">10 MB</option>
+            <option value="25">25 MB</option>
+            <option value="50">50 MB</option>
+            <option value="100">100 MB</option>
+            <option value="500">500 MB</option>
+            <option value="1000">1 GB</option>
+          </select>
+        </label>
         <button class="btn primary" id="startBtn" data-i18n="start"></button>
       </div>
       <p class="gif-note" id="gifNote" data-i18n="gif_hint" hidden></p>
+      <p class="gif-note" id="sizeNote" data-i18n="size_note" hidden></p>
 
       <div class="savein">
         <span class="savein-label" data-i18n="label_folder"></span>
@@ -129,7 +147,11 @@
       <div class="toolbar">
         <label class="fld">
           <span data-i18n="label_gif_start"></span>
-          <input id="cvStart" type="text" inputmode="decimal" placeholder="0:00" autocomplete="off" spellcheck="false">
+          <input id="cvStart" type="text" inputmode="decimal" value="0:00" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="fld">
+          <span data-i18n="label_gif_end"></span>
+          <input id="cvEnd" type="text" inputmode="decimal" value="0:10" autocomplete="off" spellcheck="false">
         </label>
         <label class="fld">
           <span data-i18n="label_gif_len"></span>
@@ -151,9 +173,23 @@
             <option value="20">20 fps</option>
           </select>
         </label>
+        <label class="fld" >
+          <span data-i18n="label_size_limit"></span>
+          <select data-setting="size_limit_mb">
+            <option value="0" data-i18n="size_none"></option>
+            <option value="8">8 MB</option>
+            <option value="10">10 MB</option>
+            <option value="25">25 MB</option>
+            <option value="50">50 MB</option>
+            <option value="100">100 MB</option>
+            <option value="500">500 MB</option>
+            <option value="1000">1 GB</option>
+          </select>
+        </label>
         <button class="btn primary" id="cvGo" data-i18n="cv_go" disabled></button>
       </div>
       <p class="gif-note" data-i18n="cv_hint"></p>
+      <p class="gif-note" id="cvSizeNote" data-i18n="size_note" hidden></p>
 
       <div class="list-head" id="cvHead" hidden>
         <h2 id="cvLabel"></h2>

@@ -15,6 +15,7 @@ DEFAULTS = {
     "mp3_bitrate": "320",       # 320 / 192 / 128
     "gif_width": "480",         # 320 / 480 / 640
     "gif_fps": "15",            # 10 / 15 / 20
+    "size_limit_mb": "0",       # 0=上限なし / 8 / 10 / 25 / 50 / 100 / 500 / 1000
     "cookies_browser": "none",  # none / edge / chrome / firefox
     "auto_check_app": True,
     "auto_update_ytdlp": True,
@@ -28,6 +29,7 @@ CHOICES = {
     "mp3_bitrate": {"320", "192", "128"},
     "gif_width": {"320", "480", "640"},
     "gif_fps": {"10", "15", "20"},
+    "size_limit_mb": {"0", "8", "10", "25", "50", "100", "500", "1000"},
     "cookies_browser": {"none", "edge", "chrome", "firefox"},
 }
 

@@ -8,6 +8,7 @@ import threading
 import time
 
 from . import gif as gifmod
+from . import sizefit
 from . import paths, tools
 
 URL_RE = re.compile(r"^https?://\S+$", re.I)
@@ -77,10 +78,14 @@ def build_args(job, outdir, ytdlp, ffdir, deno, cookies_browser="none"):
               "--download-sections", gifmod.section_arg(job["gif"]), "--force-keyframes-at-cuts"]
     elif job["fmt"] == "mp3":
         a += ["-f", "ba/b", "-x", "--audio-format", "mp3",
-              "--audio-quality", f"{job['bitrate']}K",
-              "--embed-metadata", "--embed-thumbnail", "--convert-thumbnails", "jpg"]
+              "--audio-quality", f"{job['bitrate']}K", "--embed-metadata"]
+        if not job.get("size_limit"):      # 上限があるときは、ジャケット画像の分も節約する
+            a += ["--embed-thumbnail", "--convert-thumbnails", "jpg"]
     else:
         q = job["quality"]
+        lim = job.get("size_limit", 0)
+        if q == "best" and lim:      # 小さい上限なのに4Kを落とすのは無駄なので、元の画質に上限をつける
+            q = "720" if lim <= 25 * sizefit.MB else "1080" if lim <= 100 * sizefit.MB else "best"
         sort = "res,vcodec:h264,acodec:m4a" if q == "best" else f"res:{q},vcodec:h264,acodec:m4a"
         a += ["-f", "bv*+ba/b", "-S", sort, "--merge-output-format", "mp4", "--embed-metadata"]
     a.append(job["url"])
@@ -110,7 +115,7 @@ class Engine:
         threading.Thread(target=self._worker, daemon=True).start()
 
     # ---------------------------------------------------------- 公開操作
-    def add(self, url, fmt, quality, bitrate, outdir, gif=None):
+    def add(self, url, fmt, quality, bitrate, outdir, gif=None, size_limit=0):
         url = (url or "").strip()
         if not URL_RE.match(url):
             raise ValueError("bad_url")
@@ -122,7 +127,7 @@ class Engine:
             gif = None
         job = {
             "id": next(self._ids), "url": url, "fmt": fmt, "quality": quality, "bitrate": bitrate,
-            "kind": "download", "outdir": outdir, "gif": gif, "stage": "", "status": "queued", "title": "", "site": "", "thumb": "", "percent": 0.0, "speed": 0.0, "eta": 0,
+            "kind": "download", "outdir": outdir, "gif": gif, "size_limit": int(size_limit or 0), "size": 0, "fitted": False, "stage": "", "status": "queued", "title": "", "site": "", "thumb": "", "percent": 0.0, "speed": 0.0, "eta": 0,
             "filepath": "", "error": "", "error_detail": "", "created": time.time(),
             "_cancel": False, "_streams": [],
         }
@@ -131,7 +136,7 @@ class Engine:
             self._cv.notify()
         return job["id"]
 
-    def add_local(self, src, gif):
+    def add_local(self, src, gif, size_limit=0):
         """パソコン内の動画ファイルを、そのままGIFに変換する（ダウンロードなし）。GIFは元のファイルと同じフォルダに保存。"""
         if not isinstance(src, str) or not os.path.isfile(src):
             raise ValueError("bad_file")
@@ -140,7 +145,8 @@ class Engine:
         g = gifmod.validate(gif.get("start"), gif.get("length"), gif.get("width"), gif.get("fps"))
         job = {
             "id": next(self._ids), "url": src, "fmt": "gif", "quality": "", "bitrate": "", "kind": "convert",
-            "outdir": os.path.dirname(os.path.abspath(src)), "gif": g, "stage": "", "status": "queued",
+            "outdir": os.path.dirname(os.path.abspath(src)), "gif": g, "size_limit": int(size_limit or 0), "size": 0,
+            "fitted": False, "stage": "", "status": "queued",
             "title": os.path.splitext(os.path.basename(src))[0], "site": "", "thumb": "", "percent": 0.0,
             "speed": 0.0, "eta": 0, "filepath": "", "error": "", "error_detail": "", "created": time.time(),
             "_cancel": False, "_streams": [],
@@ -186,7 +192,7 @@ class Engine:
         with self._cv:
             j = self._find(jid)
             if j and j["status"] in ("error", "canceled"):
-                j.update(status="queued", stage="", percent=0.0, speed=0.0, eta=0, error="", error_detail="",
+                j.update(status="queued", stage="", size=0, fitted=False, percent=0.0, speed=0.0, eta=0, error="", error_detail="",
                          filepath="", _cancel=False, _streams=[])
                 self._cv.notify()
 
@@ -232,16 +238,19 @@ class Engine:
             job["error"] = code
             job["error_detail"] = detail[-600:]
 
+    def _canceled(self, job):
+        with self._cv:
+            return job["_cancel"]
+
     def _run(self, job):
-        if job.get("kind") == "convert":
-            ffdir = self.tools["ffdir"]()
+        ffdir = self.tools["ffdir"]()
+        if job.get("kind") == "convert":                       # パソコン内の動画 → GIF
             if not ffdir:
                 return self._fail(job, "tools_missing")
             g = job["gif"]
             return self._finish_gif(job, ffdir, src=job["url"], trim=(g["start"], g["length"]),
                                     lo=0.0, span=99.0, fail_code="convert")
         ytdlp = self.tools["ytdlp"]()
-        ffdir = self.tools["ffdir"]()
         deno = self.tools["deno"]()
         if not ytdlp or not ffdir:
             return self._fail(job, "tools_missing")
@@ -255,8 +264,11 @@ class Engine:
             target = workdir
         try:
             self._run_ytdlp(job, ytdlp, ffdir, deno, target)
-            if job["fmt"] == "gif" and job["status"] == "running":
-                self._finish_gif(job, ffdir)
+            if job["status"] == "running":                     # ダウンロード成功。ここから仕上げ
+                if job["fmt"] == "gif":
+                    self._finish_gif(job, ffdir)
+                else:
+                    self._finish_media(job, ffdir)
         finally:
             if workdir:
                 shutil.rmtree(workdir, ignore_errors=True)
@@ -281,31 +293,17 @@ class Engine:
         finally:
             with self._cv:
                 self._procs.pop(job["id"], None)
-
-        with self._cv:
-            canceled = job["_cancel"]
-        if canceled:
+        if self._canceled(job):
             with self._cv:
                 job["status"] = "canceled"
             return
         if rc == 0 and job["filepath"]:
-            if job["fmt"] != "gif":      # gifはこのあと変換が残っているので、まだ完了にしない
-                with self._cv:
-                    job.update(status="done", percent=100.0, speed=0.0, eta=0)
-            return
+            return                                              # 成功。完了にするのは仕上げ（サイズ調整）のあと
         text = "\n".join(saw_error) or "\n".join(tail)
         self._fail(job, classify_error(text), text)
 
-    def _finish_gif(self, job, ffdir, src=None, trim=None, lo=60.0, span=39.0, fail_code="ffmpeg"):
-        """動画をffmpegでGIFにする。ダウンロード後の区間動画（lo=60）にも、パソコン内の動画（lo=0）にも使う"""
-        g = job["gif"]
-        src = src or job["filepath"]
-        stem = os.path.splitext(os.path.basename(src))[0]
-        dst = gifmod.unique_path(job["outdir"], stem, ".gif")
-        args = gifmod.build_ffmpeg_args(tools.ffmpeg_exe(ffdir), src, dst, g["fps"], g["width"], trim=trim)
-        with self._cv:
-            job.update(stage="convert", speed=0.0, eta=0, status="running")
-            job["percent"] = max(job["percent"], lo)
+    def _ffmpeg(self, job, args, total_sec, lo, span):
+        """ffmpegを動かして、進み具合を job["percent"] に反映する。返り値: (終了コード, 最後のメッセージ)"""
         p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                              creationflags=tools.NO_WINDOW, stdin=subprocess.DEVNULL)
         with self._cv:
@@ -316,7 +314,7 @@ class Engine:
                 line = raw.decode("utf-8", errors="replace").strip()
                 sec = gifmod.progress_seconds(line)
                 if sec is not None:
-                    frac = min(1.0, sec / max(g["length"], 0.1))
+                    frac = min(1.0, sec / max(total_sec, 0.1))
                     with self._cv:
                         job["percent"] = max(job["percent"], min(99.0, lo + span * frac))
                 elif line and "=" not in line:
@@ -326,23 +324,132 @@ class Engine:
         finally:
             with self._cv:
                 self._procs.pop(job["id"], None)
+        return rc, tail
+
+    @staticmethod
+    def _remove(path):
+        try:
+            if path and os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
+
+    def _finish_media(self, job, ffdir):
+        """MP4/MP3の仕上げ。サイズ上限があって超えていたら、収まるように作り直してから完了にする"""
+        path = job["filepath"]
+        limit = job.get("size_limit", 0)
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            return self._fail(job, "unknown", "output file is missing")
+        if limit and size > limit:
+            if not self._shrink(job, ffdir, path, limit):
+                return                                          # 失敗・中止の状態は _shrink が設定済み
+            size = os.path.getsize(path)
         with self._cv:
-            canceled = job["_cancel"]
-        ok = rc == 0 and os.path.exists(dst) and os.path.getsize(dst) > 0
-        if canceled or not ok:
-            try:
-                if os.path.exists(dst):
-                    os.remove(dst)
-            except OSError:
-                pass
-        if canceled:
+            job.update(status="done", percent=100.0, speed=0.0, eta=0, stage="", size=size)
+
+    def _shrink(self, job, ffdir, path, limit):
+        """できあがったMP4/MP3を、長さから逆算した設定で作り直して上限に収める。成功したら True"""
+        ff = tools.ffmpeg_exe(ffdir)
+        dur = gifmod.probe_duration(tools.ffprobe_exe(ffdir), path, tools.NO_WINDOW)
+        if not dur:
+            self._fail(job, "size_fail", "could not read the duration")
+            return False
+        with self._cv:
+            job.update(stage="convert", speed=0.0, eta=0, fitted=True)
+        tmp = path + ".fit" + (os.path.splitext(path)[1] or ".tmp")
+        is_mp3 = job["fmt"] == "mp3"
+        if is_mp3:
+            wanted = int(job["bitrate"] or 320)
+            first = sizefit.mp3_bitrate_for(dur, limit, wanted)
+            if not first:
+                self._fail(job, "size_fail", "even the lowest bitrate does not fit")
+                return False
+            ladder = [b for b in sizefit.MP3_LADDER if b <= first]
+            settings = ladder[:2]                               # まず計算どおり、だめならもう1段下げる
+        else:
+            plan = sizefit.video_plan(dur, limit)
+            if not plan:
+                self._fail(job, "size_fail", "the limit is too small for this length")
+                return False
+            settings = [plan]
+        i, sz = 0, 0
+        while i < len(settings) or (not is_mp3 and i < 3):
+            cur = settings[i]
+            if is_mp3:
+                args = [ff, "-y", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-i", path,
+                        "-vn", "-c:a", "libmp3lame", "-b:a", f"{cur}k", "-map_metadata", "0", tmp]
+            else:
+                v = cur["v_kbps"]
+                args = [ff, "-y", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-i", path,
+                        "-vf", f"scale=-2:'min({cur['height']},ih)'", "-c:v", "libx264", "-preset", "medium",
+                        "-b:v", f"{v}k", "-maxrate", f"{int(v * 1.15)}k", "-bufsize", f"{v * 2}k", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-b:a", f"{cur['a_kbps']}k", "-movflags", "+faststart", tmp]
+            rc, tail = self._ffmpeg(job, args, dur, 95.0, 4.0)
+            if self._canceled(job):
+                self._remove(tmp)
+                with self._cv:
+                    job["status"] = "canceled"
+                return False
+            if rc != 0 or not os.path.exists(tmp):
+                self._remove(tmp)
+                self._fail(job, "ffmpeg", "\n".join(tail))
+                return False
+            sz = os.path.getsize(tmp)
+            if sz <= limit:
+                os.replace(tmp, path)
+                return True
+            i += 1
+            if not is_mp3 and i < 3:
+                nxt = sizefit.retry_video_plan(cur, sz, limit)
+                if not nxt:
+                    break
+                settings.append(nxt)
+        self._remove(tmp)
+        self._fail(job, "size_fail", f"{sz} bytes > limit {limit}")
+        return False
+
+    def _finish_gif(self, job, ffdir, src=None, trim=None, lo=60.0, span=39.0, fail_code="ffmpeg"):
+        """動画をGIFにする。サイズ上限があって超えたら、幅・色数・コマ数を下げて作り直す（最大7回）"""
+        g = job["gif"]
+        limit = job.get("size_limit", 0)
+        src = src or job["filepath"]
+        stem = os.path.splitext(os.path.basename(src))[0]
+        dst = gifmod.unique_path(job["outdir"], stem, ".gif")
+        cur = {"width": g["width"], "fps": g["fps"], "colors": 256}
+        with self._cv:
+            job.update(stage="convert", speed=0.0, eta=0, status="running")
+            job["percent"] = max(job["percent"], lo)
+        for attempt in range(1, sizefit.MAX_GIF_ATTEMPTS + 1):
+            args = gifmod.build_ffmpeg_args(tools.ffmpeg_exe(ffdir), src, dst, cur["fps"], cur["width"],
+                                            trim=trim, colors=cur["colors"])
+            part = min(attempt - 1, 3)
+            rc, tail = self._ffmpeg(job, args, g["length"], lo + span * part / 4, span / 4)
+            ok = rc == 0 and os.path.exists(dst) and os.path.getsize(dst) > 0
+            if self._canceled(job):
+                self._remove(dst)
+                with self._cv:
+                    job["status"] = "canceled"
+                return
+            if not ok:
+                self._remove(dst)
+                return self._fail(job, fail_code, "\n".join(tail))
+            size = os.path.getsize(dst)
+            if not limit or size <= limit:
+                with self._cv:
+                    job.update(status="done", percent=100.0, speed=0.0, eta=0, filepath=dst, stage="", size=size)
+                    job["fitted"] = attempt > 1
+                return
+            dims = gifmod.gif_dimensions(dst)
+            nxt = sizefit.next_gif_params(cur, dims[0] if dims else cur["width"], size, limit, attempt)
+            if nxt is None:
+                break
+            cur = nxt
             with self._cv:
-                job["status"] = "canceled"
-            return
-        if not ok:
-            return self._fail(job, fail_code, "\n".join(tail))
-        with self._cv:
-            job.update(status="done", percent=100.0, speed=0.0, eta=0, filepath=dst, stage="")
+                job["fitted"] = True
+        self._remove(dst)
+        self._fail(job, "size_fail", f"could not fit within {limit} bytes")
 
     def _on_line(self, job, line):
         with self._cv:
