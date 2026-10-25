@@ -75,6 +75,11 @@ class Api:
         except ValueError:
             return {"ok": False}
 
+    def set_titlebar(self, dark):
+        """一番上のウィンドウの枠（タイトルバー）の色を、テーマに合わせる。
+        Windows 11 の機能を使う。ネイティブの最小化・最大化・閉じるボタンはそのまま。"""
+        _apply_titlebar(bool(dark))
+
     def pick_folder(self):
         import webview
         cur = self._settings.download_dir()
@@ -294,6 +299,29 @@ def _write_clipboard(text):
         return r.returncode == 0
     except Exception:
         return False
+
+
+def _apply_titlebar(dark):
+    """DWM（Windowsのデスクトップ描画）で、タイトルバーの背景を暗い/明るいに塗る。
+    Windows 11 (build 22000+) で色が変わる。それ以前やWindows以外では、何も起きないだけ（害はない）。"""
+    if not paths.IS_WINDOWS:
+        return
+    try:
+        import ctypes
+        hwnd = ctypes.windll.user32.FindWindowW(None, APP_NAME)
+        if not hwnd:
+            return
+        dwm = ctypes.windll.dwmapi
+        # まず「ダークモードのタイトルバー」を指定（Windows 10 1809+ でも効く）
+        val = ctypes.c_int(1 if dark else 0)
+        for attr in (20, 19):   # 20=新しいビルド / 19=古いビルドの番号。両方試す
+            dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(val), ctypes.sizeof(val))
+        # タイトルバーの背景色（COLORREF = 0x00BBGGRR）。アプリのサイドバーの色に合わせる
+        color = 0x00161515 if dark else 0x00EDEBEB   # dark #151516 / light #ebebed
+        c = ctypes.c_int(color)
+        dwm.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(c), ctypes.sizeof(c))   # 35=DWMWA_CAPTION_COLOR (Win11)
+    except Exception:
+        pass   # 対応していない環境では、ふつうのタイトルバーのまま
 
 
 def _single_instance():

@@ -72,6 +72,6 @@
       window.__rolledBack = [yt.current, before];
       return { ok: true, current: yt.current, previous: before };
     },
-    retry_setup: ok, reinstall_tool: ok,
+    retry_setup: ok, reinstall_tool: ok, set_titlebar: ok,
   } };
 })();

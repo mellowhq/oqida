@@ -7,6 +7,7 @@ let S = null;            // 最新の状態
 let busyPoll = false;
 const rows = new Map();  // jobId -> 行の要素
 const mq = window.matchMedia("(prefers-color-scheme: dark)");
+let pendingAccent = null;   // ユーザーが選んだ直後のアクセント色。保存が確定するまで poll に上書きさせない
 
 const SWATCHES = [
   ["#ff8a3d", "acc_orange"], ["#4c8dff", "acc_blue"], ["#2fd08a", "acc_green"], ["#f0619d", "acc_pink"],
@@ -86,6 +87,8 @@ function applyTheme() {
   const eff = th === "system" ? (mq.matches ? "dark" : "light") : th;
   document.documentElement.dataset.theme = eff;
   applyAccent();
+  // 一番上のウィンドウの枠（タイトルバー）の色を、テーマに合わせる（Windowsのみ・対応環境のみ）
+  try { if (api && api.set_titlebar) api.set_titlebar(eff === "dark"); } catch (e) { /* 非対応環境では何もしない */ }
 }
 function applyLang() {
   const st = S && S.settings;
@@ -130,13 +133,16 @@ function buildSwatches() {
     box.insertBefore(b, custom);
   });
   const picker = $("#accentPicker");
-  picker.addEventListener("input", () => { S.settings.accent = picker.value; applyAccent(); renderSwatches(); });
+  // ドラッグ中（input）は画面にだけ反映。離した時（change）に保存する。
+  // pendingAccent を立てておくと、保存が終わる前に poll が走っても、選んだ色が消されない。
+  picker.addEventListener("input", () => { pendingAccent = picker.value.toLowerCase(); S.settings.accent = pendingAccent; applyAccent(); renderSwatches(); });
   picker.addEventListener("change", () => setAccent(picker.value));
 }
 async function setAccent(hex) {
-  S.settings.accent = hex.toLowerCase();
+  pendingAccent = hex.toLowerCase();
+  S.settings.accent = pendingAccent;
   applyAccent(); renderSwatches();
-  await api.set_setting("accent", hex.toLowerCase());
+  await api.set_setting("accent", pendingAccent);
 }
 function renderSwatches() {
   const cur = (S.settings.accent || "").toLowerCase();
@@ -147,7 +153,8 @@ function renderSwatches() {
     preset = preset || on;
   });
   $("#customSwatch").classList.toggle("is-on", !preset);
-  $("#accentPicker").value = cur || "#ff8a3d";
+  const picker = $("#accentPicker");
+  if (document.activeElement !== picker && picker.value !== (cur || "#ff8a3d")) picker.value = cur || "#ff8a3d";
 }
 
 function renderSettings() {
@@ -592,6 +599,10 @@ async function poll() {
     const prevLang = S && S.settings.language_effective;
     const prevAccent = S && S.settings.accent;
     S = await api.get_state();
+    if (pendingAccent) {
+      if (S.settings.accent === pendingAccent) pendingAccent = null;   // アプリ側が追いついた
+      else S.settings.accent = pendingAccent;                          // まだなら、選んだ色を保つ
+    }
     if (S.settings.language_effective !== prevLang) applyLang();
     applyTheme();
     renderAll();

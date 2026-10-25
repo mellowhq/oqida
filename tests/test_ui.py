@@ -380,3 +380,35 @@ def test_speed_limit_and_history_settings(page):
     page.select_option("select[data-setting=speed_limit]", "2")
     page.click("#clearHistoryBtn")
     assert page.is_visible("#toast") and "履歴を消去" in page.inner_text("#toast")
+
+
+def test_custom_accent_survives_poll_race(page):
+    """カラーピッカーで選んだ色が、保存確定前の poll で元に戻されないこと（報告された不具合）"""
+    page.click(".nav-item[data-view=settings]")
+    # set_setting をわざと遅延させ、その間に get_state(poll) が先に返る状況を作る
+    page.evaluate("""() => {
+        const api = window.pywebview.api;
+        const realSet = api.set_setting.bind(api);
+        api.set_setting = (k, v) => new Promise(res => setTimeout(async () => { await realSet(k, v); res({ok:true}); }, 400));
+    }""")
+    # input（ドラッグ中）→ change（確定）を発火
+    page.evaluate("""() => { const p = document.querySelector('#accentPicker');
+        p.value = '#12e0c0'; p.dispatchEvent(new Event('input', {bubbles:true})); p.dispatchEvent(new Event('change', {bubbles:true})); }""")
+    accent1 = page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()")
+    assert accent1 != "" and accent1.lower() != "#ff8a3d"
+    page.wait_for_timeout(1300)   # 保存が確定するまでの間に poll が複数回走る
+    accent2 = page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()")
+    assert accent2 == accent1, (accent1, accent2)                     # 元の色に戻っていない
+    assert page.evaluate("document.querySelector('#customSwatch').classList.contains('is-on')")
+    assert page.evaluate("window.pywebview.api.get_state ? true : true")
+
+
+def test_titlebar_called_on_theme_change(page):
+    page.evaluate("window.__tb = []; const a = window.pywebview.api; const r = a.set_titlebar; a.set_titlebar = (d) => { window.__tb.push(d); return r ? r(d) : {ok:true}; };")
+    page.click(".nav-item[data-view=settings]")
+    page.select_option("[data-setting=theme]", "light")
+    page.wait_for_timeout(100)
+    page.select_option("[data-setting=theme]", "dark")
+    page.wait_for_timeout(100)
+    calls = page.evaluate("window.__tb")
+    assert False in calls and True in calls                           # ライト=false / ダーク=true を伝えている

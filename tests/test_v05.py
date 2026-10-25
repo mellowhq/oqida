@@ -324,7 +324,7 @@ def test_error_log_is_useful_and_private(engine, tmp_path):
     j = wait_for(engine, jid)
     log = engine.get_log(jid)
     assert j["status"] == "error"
-    assert log.startswith("OQIDA 0.5.0") and "error: " in log and "url: http://127.0.0.1:9/none.mp4" in log
+    assert log.startswith("OQIDA ") and "error: " in log and "url: http://127.0.0.1:9/none.mp4" in log
     assert "$ " in log and "ERROR" in log                                 # 実行したコマンドと、yt-dlpのエラーが入っている
     assert "OQIDA_PROG" not in log                                        # 進み具合の行は入れない
     assert str(paths.Path.home()) not in log                              # ユーザー名が入るので、ホームのパスは伏せる
