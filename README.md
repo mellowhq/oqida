@@ -10,6 +10,12 @@ A Windows desktop app that saves a video URL as MP4 or MP3. Works with YouTube, 
 - URLを貼って MP4 / MP3 を選ぶだけで保存（画質・音質の指定、複数のキュー対応、サムネイル表示）
 - YouTube 以外にも、X（Twitter）・TikTok など多数のサイトに対応
 - GIF への変換（開始位置・長さ・幅・コマ数を指定。指定した区間だけを取得して変換するので、長い動画でも速い）
+- ダウンロード履歴（アプリを閉じても一覧が残り、同じURLは重複を警告）
+- 失敗したときの詳細ログ表示とコピー（原因の共有に使える／ユーザー名のフォルダは伏せる）
+- 一時停止・再開、速度制限
+- MP4・MP3 などの区間指定（指定した区間だけ保存）
+- 音声形式は MP3 / M4A / Opus / FLAC / WAV に対応、サムネイル画像の保存も可能
+- yt-dlp の更新が壊れていたとき、設定から旧バージョンに戻せる
 - ファイルサイズの上限を指定でき、MP4・MP3・GIF を上限内に収まるよう自動で調整（上限に収まらないときはエラーで通知）
 - GIF の範囲は「開始・終了・長さ」のどれを変えても連動
 - パソコン内の動画ファイルを GIF に変換（左メニューの「GIF変換」。元のファイルと同じフォルダに保存）
@@ -25,6 +31,7 @@ A Windows desktop app that saves a video URL as MP4 or MP3. Works with YouTube, 
 管理者権限は不要です。
 
 初回起動時のみ、yt-dlp・FFmpeg・Deno（YouTube対応に使用）を自動でダウンロードします（約250MB）。
+画面表示には Microsoft Edge WebView2 ランタイムが必要です（最近の Windows には標準で入っています。無い場合はインストーラーが自動で導入します）。
 署名のない実行ファイルのため、初回は Windows SmartScreen の警告が表示されることがあります。
 
 ## 使い方

@@ -3,11 +3,13 @@
 アプリ本体には同梱せず、初回起動時に GitHub から取得して %LOCALAPPDATA%\\OQIDA\\bin に置く。
 こうしておくと、YouTube側の仕様変更でyt-dlpが壊れても、アプリを作り直さずに更新できる。
 """
+import json
 import os
 import shutil
 import subprocess
 import threading
 import zipfile
+from pathlib import Path
 
 from . import paths
 from .netutil import download_file, http_json, is_newer
@@ -126,8 +128,78 @@ def _replace(src, dst):
     os.replace(src, dst)
 
 
+def ytdlp_bin_path():
+    """アプリが管理するyt-dlpの置き場所（binフォルダ）"""
+    return paths.bin_dir() / _exe("yt-dlp")
+
+
+def _ytdlp_prev_path():
+    return paths.bin_dir() / _exe("yt-dlp.previous")
+
+
+def _ytdlp_prev_info():
+    return paths.bin_dir() / "yt-dlp.previous.json"
+
+
+def exe_version(path):
+    """実行ファイルの --version の結果。動かなければ None"""
+    try:
+        out = subprocess.run([str(path), "--version"], capture_output=True, text=True, timeout=30,
+                             creationflags=NO_WINDOW)
+        v = out.stdout.strip()
+        return v if out.returncode == 0 and v else None
+    except Exception:
+        return None
+
+
+def previous_ytdlp_version():
+    """巻き戻し先の版。なければ None"""
+    try:
+        if not _ytdlp_prev_path().exists():
+            return None
+        return json.loads(_ytdlp_prev_info().read_text(encoding="utf-8")).get("version") or "?"
+    except Exception:
+        return "?" if _ytdlp_prev_path().exists() else None
+
+
+def _install_ytdlp(new_file):
+    """新しいyt-dlpを入れる。先に動くことを確かめ、今の版は「前の版」として残す。"""
+    new_file = Path(new_file)
+    if not paths.IS_WINDOWS:
+        os.chmod(new_file, 0o755)
+    newv = exe_version(new_file)
+    if not newv:
+        try:
+            os.remove(new_file)
+        except OSError:
+            pass
+        raise RuntimeError("the downloaded yt-dlp does not run")
+    cur = ytdlp_bin_path()
+    if cur.exists():
+        oldv = exe_version(cur)
+        shutil.copy2(cur, _ytdlp_prev_path())
+        _ytdlp_prev_info().write_text(json.dumps({"version": oldv or "?"}), encoding="utf-8")
+    _replace(new_file, cur)
+
+
+def rollback_ytdlp():
+    """今のyt-dlpと「前の版」を入れ替える（もう一度呼ぶと元に戻る）。返り値: (今の版, 入れ替え前の版)"""
+    cur, prev = ytdlp_bin_path(), _ytdlp_prev_path()
+    if not prev.exists():
+        raise RuntimeError("no previous version")
+    curv = exe_version(cur) if cur.exists() else None
+    swap = paths.bin_dir() / _exe("yt-dlp.swap")
+    if cur.exists():
+        _replace(cur, swap)
+    _replace(prev, cur)
+    if swap.exists():
+        _replace(swap, prev)
+        _ytdlp_prev_info().write_text(json.dumps({"version": curv or "?"}), encoding="utf-8")
+    return exe_version(cur), curv
+
+
 def _fetch_ytdlp(progress, cancel):
-    """最新のyt-dlp.exeを取得。GitHubがsha256を教えてくれる場合は照合する。"""
+    """最新のyt-dlpを取得。GitHubがsha256を教えてくれる場合は照合する。"""
     url, want_sha = YTDLP_URL, None
     try:
         rel = http_json(f"https://api.github.com/repos/{YTDLP_REPO}/releases/latest")
@@ -139,12 +211,12 @@ def _fetch_ytdlp(progress, cancel):
                     want_sha = d[7:].lower()
     except Exception:
         pass
-    tmp = paths.tmp_dir() / "yt-dlp.exe.part"
+    tmp = paths.tmp_dir() / _exe("yt-dlp.new")
     got = download_file(url, tmp, progress, cancel)
     if want_sha and got.lower() != want_sha:
         tmp.unlink(missing_ok=True)
         raise RuntimeError("yt-dlp checksum mismatch")
-    _replace(tmp, paths.bin_dir() / "yt-dlp.exe")
+    _install_ytdlp(tmp)
 
 
 def _fetch_zip_members(url, wanted, progress, cancel):

@@ -59,7 +59,7 @@ def test_language_switch(page):
     page.wait_for_timeout(200)
     assert page.inner_text(".nav-item[data-view=main] span") == "Download"
     assert page.get_attribute("#urlInput", "placeholder") == "Paste a video URL"
-    assert "Version 0.3.0" in page.inner_text("#appUpdText")
+    assert "Version 0.6.0" in page.inner_text("#appUpdText")
 
 
 def test_format_switch_shows_right_options(page):
@@ -151,7 +151,7 @@ def test_gif_format_shows_its_options_and_sends_range(page):
     commit(page, "#gifLen", "5")
     assert page.input_value("#gifEnd") == "1:35"                                              # 長さを変えると、終了が変わる
     page.click("#startBtn")
-    assert page.evaluate("window.__addCall") == ["https://x.com/a/status/1", {"start": "90", "length": "5"}]
+    assert page.evaluate("window.__addCall") == ["https://x.com/a/status/1", {"start": "90", "length": "5"}, False]
     page.select_option('[data-setting=format]', "mp4")
     assert not page.is_visible("#ctlGifStart") and page.is_visible("#ctlMp4") and page.is_visible("#ctlSize")
 
@@ -291,3 +291,92 @@ def test_dropped_file_info_is_shown(page):
 def test_dragging_a_file_does_not_navigate_away(page):
     ok = page.evaluate("""() => { const e = new DragEvent('drop', {cancelable: true, bubbles: true}); window.dispatchEvent(e); return e.defaultPrevented; }""")
     assert ok is True
+
+
+def test_audio_formats_and_range_switch(page):
+    page.select_option('[data-setting=format]', "m4a")
+    assert page.is_visible("#ctlMp3")                                   # M4Aは音質を選べる
+    assert page.is_visible("#ctlRangeOn") and page.is_visible("#ctlThumb")
+    assert not page.is_visible("#ctlGifStart")                          # 区間はオフのときは隠れている
+    page.select_option('[data-setting=format]', "flac")
+    assert not page.is_visible("#ctlMp3")                               # FLACは音質を選べない（ロスレス）
+    page.select_option('[data-setting=format]', "mp4")
+    page.check("#rangeOn")
+    for sel in ("#ctlGifStart", "#ctlGifEnd", "#ctlGifLen"):
+        assert page.is_visible(sel)
+    assert not page.is_visible("#ctlGifWidth")                          # 幅・コマ数はGIFだけ
+    page.fill("#urlInput", "https://x.com/a/status/1")
+    commit(page, "#gifStart", "0:10"); commit(page, "#gifLen", "30")    # MP4は60秒を超えてもよい
+    assert page.input_value("#gifLen") == "30"
+    page.click("#startBtn")
+    assert page.evaluate("window.__addCall") == ["https://x.com/a/status/1", {"start": "10", "length": "30"}, False]
+
+
+def test_duplicate_dialog(page):
+    page.goto(UI + "?mock=1&lang=ja&theme=dark&dup=1")
+    page.wait_for_selector("#updDialog:not([hidden])"); page.click("#updLater")
+    page.fill("#urlInput", "https://youtu.be/ddd")
+    page.click("#startBtn")
+    page.wait_for_selector("#dupDialog:not([hidden])")
+    assert "Lo-fi Beats for Studying" in page.inner_text("#dupMsg")
+    page.click("#dupAgain")
+    assert page.evaluate("window.__addCall")[2] is True                 # 「それでも落とす」でforce=True
+    assert page.is_hidden("#dupDialog")
+
+
+def test_pause_resume_actions(page):
+    paused_row = page.locator('.job[data-status="paused"]')
+    assert paused_row.count() == 1
+    assert "一時停止中" in paused_row.locator(".state").inner_text()
+    paused_row.locator(".link", has_text="再開").click()
+    assert page.evaluate("window.__resumed") == 9
+    running = page.locator('#queue .job[data-status="running"]').first    # ダウンロード中には一時停止ボタン
+    assert running.locator(".link", has_text="一時停止").count() == 1
+
+
+def test_error_details_dialog(page):
+    err = page.locator('.job[data-status="error"]')
+    err.locator(".link", has_text="詳細").click()
+    page.wait_for_selector("#logDialog:not([hidden])")
+    assert "ERROR" in page.inner_text("#logText") and "login" in page.inner_text("#logText")
+    page.click("#logCopy")
+    assert "Instagram" in page.evaluate("window.__copied")
+    assert page.is_visible("#toast")
+    page.click("#logClose")
+    assert page.is_hidden("#logDialog")
+
+
+def test_ytdlp_rollback_available(page):
+    page.click(".nav-item[data-view=settings]")
+    assert "旧バージョン（2026.10.01）に戻せます" in page.inner_text("#ytBackText")
+    assert page.inner_text("#ytBackBtn") == "旧バージョンに戻す"
+    page.click("#ytBackBtn")
+    assert page.evaluate("window.__rolledBack") == ["2026.10.01", "2026.10.30"]
+    page.wait_for_function("document.querySelector('#ytBackText').textContent.includes('自動では入れません')")
+    assert "新しい版（2026.10.30）に戻す" == page.inner_text("#ytBackBtn")    # もう一度押すと新しい版へ
+
+
+def test_ytdlp_rolled_back_shows_skip_and_update_anyway(page):
+    page.goto(UI + "?mock=1&lang=ja&theme=dark&back=1&upd=uptodate")
+    page.wait_for_timeout(400)
+    page.click(".nav-item[data-view=settings]")
+    assert "見送っています" in page.inner_text("#ytUpdText")
+    assert page.inner_text("#ytUpdBtn") == "それでも更新"
+    page.click("#ytUpdBtn")
+    assert page.evaluate("window.__ytUpdated") is True
+
+
+def test_ytdlp_no_previous_version(page):
+    page.goto(UI + "?mock=1&lang=ja&theme=dark&noprev=1&upd=uptodate")
+    page.wait_for_timeout(400)
+    page.click(".nav-item[data-view=settings]")
+    assert "まだありません" in page.inner_text("#ytBackText")
+    assert page.is_disabled("#ytBackBtn")
+
+
+def test_speed_limit_and_history_settings(page):
+    page.click(".nav-item[data-view=settings]")
+    assert page.eval_on_selector_all("select[data-setting=speed_limit] option", "e => e.map(x => x.value)") == ["0", "0.5", "1", "2", "5", "10"]
+    page.select_option("select[data-setting=speed_limit]", "2")
+    page.click("#clearHistoryBtn")
+    assert page.is_visible("#toast") and "履歴を消去" in page.inner_text("#toast")

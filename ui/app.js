@@ -157,9 +157,15 @@ function renderSettings() {
     if (el.type === "checkbox") el.checked = !!v;
     else if (el.value !== String(v)) el.value = String(v);
   });
-  $("#ctlMp4").hidden = st.format !== "mp4";
-  $("#ctlMp3").hidden = st.format !== "mp3";
-  ["ctlGifStart", "ctlGifEnd", "ctlGifLen", "ctlGifWidth", "ctlGifFps", "gifNote"].forEach((id) => ($("#" + id).hidden = st.format !== "gif"));
+  const fmt = st.format, isGif = fmt === "gif";
+  $("#ctlMp4").hidden = fmt !== "mp4";
+  $("#ctlMp3").hidden = !["mp3", "m4a", "opus"].includes(fmt);          // 音質を選べるのは、圧縮する形式だけ（FLAC・WAVはそのまま）
+  $("#ctlRangeOn").hidden = isGif;                                       // GIFは区間の指定が必須。それ以外は「区間を指定」をオンにしたときだけ
+  const showRange = isGif || $("#rangeOn").checked;
+  ["ctlGifStart", "ctlGifEnd", "ctlGifLen"].forEach((id) => ($("#" + id).hidden = !showRange));
+  ["ctlGifWidth", "ctlGifFps", "gifNote"].forEach((id) => ($("#" + id).hidden = !isGif));
+  $("#ctlThumb").hidden = isGif;
+  dlRange.setMax(isGif ? MAX_GIF : MAX_MEDIA);
   const limited = String(st.size_limit_mb) !== "0";
   $("#sizeNote").hidden = !limited;
   $("#cvSizeNote").hidden = !limited;
@@ -169,7 +175,7 @@ function renderSettings() {
 }
 
 /* ---------------- 開始・終了・長さの入力（どれかを変えると残りが連動する） ---------------- */
-const MIN_LEN = 0.5, MAX_LEN = 60;
+const MIN_LEN = 0.5, MAX_GIF = 60, MAX_MEDIA = 21600;      // GIFは最長60秒、MP4・音声は最長6時間
 function parseTime(str) {
   const s = String(str == null ? "" : str).trim().replace(/：/g, ":");
   if (!s) return 0;
@@ -187,6 +193,7 @@ const fmtLen = (sec) => String(Math.round(sec * 10) / 10);
 function makeRange(startId, endId, lenId, getDuration) {
   const el = { s: $("#" + startId), e: $("#" + endId), l: $("#" + lenId) };
   const v = { start: 0, len: 10 };
+  let max = MAX_GIF;
   const dur = () => { const d = getDuration(); return d && d > 0 ? d : null; };
   const show = () => {
     el.s.value = fmtTime(v.start); el.e.value = fmtTime(v.start + v.len); el.l.value = fmtLen(v.len);
@@ -195,7 +202,7 @@ function makeRange(startId, endId, lenId, getDuration) {
   const fit = () => {
     const d = dur();
     if (d) v.start = Math.min(v.start, Math.max(0, d - MIN_LEN));
-    v.len = Math.min(MAX_LEN, Math.max(MIN_LEN, v.len));
+    v.len = Math.min(max, Math.max(MIN_LEN, v.len));
     if (d && v.start + v.len > d) v.len = Math.max(MIN_LEN, d - v.start);
     if (d && v.start + v.len > d + 1e-6) v.start = Math.max(0, d - v.len);
   };
@@ -207,7 +214,7 @@ function makeRange(startId, endId, lenId, getDuration) {
   el.l.addEventListener("change", () => {
     const x = parseTime(el.l.value);
     if (Number.isNaN(x)) { toast(t("e_bad_gif"), true); show(); return; }
-    if (x > MAX_LEN) toast(t("e_len_max"), true);
+    if (x > max) toast(t(max === MAX_GIF ? "e_len_max" : "e_len_max_media"), true);
     v.len = x; fit(); show();
   });
   el.e.addEventListener("change", () => {
@@ -216,7 +223,7 @@ function makeRange(startId, endId, lenId, getDuration) {
     const d = dur();
     if (d) x = Math.min(x, d);
     if (x < v.start + MIN_LEN) { toast(t("e_bad_range"), true); show(); return; }
-    if (x - v.start > MAX_LEN) toast(t("e_len_max"), true);
+    if (x - v.start > max) toast(t(max === MAX_GIF ? "e_len_max" : "e_len_max_media"), true);
     v.len = x - v.start; fit(); show();
   });
   [el.s, el.e, el.l].forEach((i) => i.addEventListener("keydown", (ev) => { if (ev.key === "Enter") i.blur(); }));
@@ -225,6 +232,7 @@ function makeRange(startId, endId, lenId, getDuration) {
     // 送る値（秒の数字）
     value: () => ({ start: String(Math.round(v.start * 1000) / 1000), length: String(Math.round(v.len * 1000) / 1000) }),
     reset: () => { v.start = 0; v.len = 10; fit(); show(); },
+    setMax: (m) => { if (m === max) return; max = m; fit(); show(); },
   };
 }
 let cvFile = null;   // GIF変換で選んだファイル { path, name, duration }
@@ -232,16 +240,30 @@ const dlRange = makeRange("gifStart", "gifEnd", "gifLen", () => null);
 const cvRange = makeRange("cvStart", "cvEnd", "cvLen", () => (cvFile && cvFile.duration) || null);
 
 /* ---------------- ダウンロード操作 ---------------- */
-async function startDownload() {
+let pendingDup = null;   // 「もう一度ダウンロード」を選ばれたときのために覚えておく
+async function startDownload(force = false) {
   const input = $("#urlInput");
   const url = input.value.trim();
   if (!url) { toast(t("e_bad_url"), true); input.focus(); return; }
-  const gif = S.settings.format === "gif" ? dlRange.value() : null;
-  const r = await api.add_download(url, gif);
+  const rng = S.settings.format === "gif" || $("#rangeOn").checked ? dlRange.value() : null;
+  const r = await api.add_download(url, rng, force === true);
   if (r.ok) { input.value = ""; await poll(); }
-  else toast(t("e_" + (r.error || "bad_url")), true);
+  else if (r.error === "duplicate") {
+    pendingDup = { url, rng };
+    $("#dupMsg").textContent = t("dup_msg", { t: r.title || url });
+    $("#dupDialog").hidden = false;
+  } else toast(t("e_" + (r.error || "bad_url")), true);
 }
-$("#startBtn").addEventListener("click", startDownload);
+$("#startBtn").addEventListener("click", () => startDownload());
+$("#rangeOn").addEventListener("change", () => renderSettings());
+$("#dupCancel").addEventListener("click", () => { $("#dupDialog").hidden = true; pendingDup = null; });
+$("#dupAgain").addEventListener("click", async () => {
+  $("#dupDialog").hidden = true;
+  if (!pendingDup) return;
+  const { url, rng } = pendingDup; pendingDup = null;
+  const r = await api.add_download(url, rng, true);
+  if (r.ok) { $("#urlInput").value = ""; await poll(); } else toast(t("e_" + (r.error || "bad_url")), true);
+});
 $("#urlInput").addEventListener("keydown", (e) => { if (e.key === "Enter") startDownload(); });
 $("#pasteBtn").addEventListener("click", async () => {
   const txt = await api.paste_clipboard();
@@ -276,11 +298,15 @@ function setActions(el, job) {
   };
   const id = job.id;
   const after = async (p) => { await p; await poll(); };
-  if (job.status === "queued" || job.status === "running") add(t("act_cancel"), () => after(api.cancel(id)));
+  // 一時停止できるのは、ダウンロード中のもの（変換や仕上げの最中は不可）
+  if (job.status === "running" && job.kind !== "convert" && job.stage !== "convert" && job.percent < 95) add(t("act_pause"), () => after(api.pause(id)));
+  if (job.status === "paused") add(t("act_resume"), () => after(api.resume(id)));
+  if (["queued", "running", "paused"].includes(job.status)) add(t("act_cancel"), () => after(api.cancel(id)));
+  if (job.status === "error") add(t("act_detail"), () => openLog(id));
   if (job.status === "done") add(t("act_reveal"), () => api.reveal(id));
   if (job.status === "error" || job.status === "canceled") add(t("act_retry"), () => after(api.retry(id)));
   if (job.status !== "running") add(t("act_remove"), () => after(api.remove(id)));
-  el.dataset.acted = job.status + "|" + LANG;
+  el.dataset.acted = [job.status, job.stage || "", job.percent >= 95 ? 1 : 0, LANG].join("|");
 }
 function updateRow(el, job) {
   const converting = job.status === "running" && (job.stage === "convert" || job.percent >= 95);
@@ -303,7 +329,7 @@ function updateRow(el, job) {
   const bar = $(".bar", el);
   $("i", bar).style.width = job.percent.toFixed(1) + "%";
   bar.classList.toggle("busy", converting || job.status === "queued");
-  if (el.dataset.acted !== job.status + "|" + LANG) setActions(el, job);
+  if (el.dataset.acted !== [job.status, job.stage || "", job.percent >= 95 ? 1 : 0, LANG].join("|")) setActions(el, job);
 }
 function syncList(container, jobs, seen) {
   jobs.forEach((job, idx) => {
@@ -421,6 +447,7 @@ function renderUpdates() {
     case "waiting": ytxt = t("u_waiting"); ybtn = "b_wait"; ydis = true; break;
     case "updating": ytxt = t("u_updating"); ybtn = "b_wait"; ydis = true; break;
     case "updated": ytxt = t("u_updated"); break;
+    case "skipped": ytxt = t("u_skipped", { v: y.skip || y.latest }); ybtn = "b_update_anyway"; break;
     case "error": ytxt = t("u_error"); break;
   }
   const ye = $("#ytUpdText");
@@ -428,6 +455,14 @@ function renderUpdates() {
   ye.className = "row-sub" + (y.state === "available" ? " ok" : y.state === "error" ? " bad" : "");
   const yb = $("#ytUpdBtn");
   yb.textContent = t(ybtn); yb.disabled = ydis; yb.dataset.mode = y.state;
+
+  // 旧バージョンに戻す（更新したyt-dlpが壊れていたとき用）
+  const prev = y.previous;
+  const onOlder = !!(prev && y.current && verNewer(prev, y.current));       // 「前の版」のほうが新しい = いま旧バージョンを使っている
+  $("#ytBackText").textContent = !prev ? t("s_ytdlp_back_none") : onOlder && y.skip ? t("s_ytdlp_back_skip", { v: prev }) : t("s_ytdlp_back_has", { v: prev });
+  const bb = $("#ytBackBtn");
+  bb.textContent = onOlder ? t("b_forward", { v: prev }) : t("b_back");
+  bb.disabled = !prev || ["updating", "waiting", "checking"].includes(y.state);
 
   $("#navDot").hidden = !["available", "downloading", "ready"].includes(a.state);
   $("#navDot").title = t("nav_update");
@@ -481,9 +516,48 @@ $("#appUpdBtn").addEventListener("click", async () => {
   } else await api.check_app_update();
   await poll();
 });
+function verNewer(a, b) {   // "2026.10.30" のような版の新旧
+  const pa = String(a).match(/\d+/g) || [], pb = String(b).match(/\d+/g) || [];
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = +(pa[i] || 0), y = +(pb[i] || 0);
+    if (x !== y) return x > y;
+  }
+  return false;
+}
+$("#ytBackBtn").addEventListener("click", async () => {
+  const r = await api.rollback_ytdlp();
+  if (r.ok) toast(t("back_done", { v: r.current || "?" }));
+  else toast(t(r.error === "busy" ? "u_busy" : "e_ytdlp_back_fail"), true);
+  await poll();
+});
+$("#clearHistoryBtn").addEventListener("click", async () => { await api.clear_history(); await poll(); toast(t("history_cleared")); });
+
+/* ---------------- 失敗の詳細ログ ---------------- */
+async function openLog(id) {
+  const text = await api.get_job_log(id);
+  $("#logText").textContent = text || "-";
+  $("#logDialog").hidden = false;
+}
+function fallbackCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.cssText = "position:fixed;opacity:0;left:-1000px";
+  document.body.appendChild(ta); ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+  ta.remove();
+  return ok;
+}
+$("#logClose").addEventListener("click", () => { $("#logDialog").hidden = true; });
+$("#logCopy").addEventListener("click", async () => {
+  const text = $("#logText").textContent;
+  let ok = false;
+  try { const r = await api.copy_text(text); ok = !!(r && r.ok); } catch (e) { ok = false; }
+  if (!ok) ok = fallbackCopy(text);
+  toast(ok ? t("log_copied") : t("e_copy_fail"), !ok);
+});
 $("#ytUpdBtn").addEventListener("click", async () => {
   const m = $("#ytUpdBtn").dataset.mode;
-  if (m === "available") await api.update_ytdlp();
+  if (m === "available" || m === "skipped") await api.update_ytdlp();
   else await api.check_ytdlp();
   await poll();
 });

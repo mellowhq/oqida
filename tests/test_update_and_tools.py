@@ -123,6 +123,7 @@ def test_zip_missing_member_fails(monkeypatch, tmp_path):
 def test_ytdlp_checksum_verified(monkeypatch):
     monkeypatch.setenv("OQIDA_ALLOW_FETCH", "1")
     monkeypatch.delenv("OQIDA_YTDLP", raising=False)
+    monkeypatch.setattr(tools, "exe_version", lambda p: "2099.01.01")          # ダウンロードした物が動く、という前提にする
     monkeypatch.setattr(tools, "http_json", lambda url: {"tag_name": "2099.01.01", "assets": [
         {"name": "yt-dlp.exe", "browser_download_url": "http://x/yt-dlp.exe", "digest": "sha256:" + "a" * 64}]})
 
@@ -132,15 +133,15 @@ def test_ytdlp_checksum_verified(monkeypatch):
     monkeypatch.setattr(tools, "download_file", bad_dl)
     with pytest.raises(RuntimeError):
         tools._fetch_ytdlp(None, None)
-    assert not (paths.bin_dir() / "yt-dlp.exe").exists()
+    assert not tools.ytdlp_bin_path().exists()
 
-    good = hashlib_sha = hashlib.sha256(b"ok").hexdigest()
+    good = hashlib.sha256(b"ok").hexdigest()
     monkeypatch.setattr(tools, "http_json", lambda url: {"tag_name": "2099.01.01", "assets": [
         {"name": "yt-dlp.exe", "browser_download_url": "http://x/yt-dlp.exe", "digest": "sha256:" + good}]})
     monkeypatch.setattr(tools, "download_file",
                         lambda url, dest, progress=None, cancel=None: (dest.write_bytes(b"ok"), good)[1])
     tools._fetch_ytdlp(None, None)
-    assert (paths.bin_dir() / "yt-dlp.exe").read_bytes() == b"ok"
+    assert tools.ytdlp_bin_path().read_bytes() == b"ok"
 
 
 def test_ytdlp_updater_waits_while_busy(monkeypatch):

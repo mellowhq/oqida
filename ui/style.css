@@ -102,7 +102,7 @@ select option { background: var(--surface); color: var(--text); }
 .bar > i { display: block; height: 100%; width: 0; border-radius: 4px; background: var(--accent); box-shadow: 0 0 8px var(--glow); transition: width .35s ease; }
 .bar.busy > i { animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .5; } }
-.job:not([data-status="running"]):not([data-status="queued"]) .bar { display: none; }
+.job:not([data-status="running"]):not([data-status="queued"]):not([data-status="paused"]) .bar { display: none; }
 .acts { display: flex; gap: 14px; }
 .empty { padding: 44px 0; text-align: center; color: var(--dim); }
 .empty p { margin: 0 0 6px; }
@@ -179,3 +179,12 @@ select option { background: var(--surface); color: var(--text); }
 
 .meta .fit { color: var(--dim); }
 .meta .fit:not(:empty)::before { content: "· "; }
+
+/* v0.5 */
+.fld .sw { height: 38px; display: flex; align-items: center; }
+.modal-card.wide { width: min(720px, 92vw); }
+.modal-card .small { margin: 0 0 12px; font-size: 12.5px; }
+.logbox { margin: 0 0 18px; padding: 12px 14px; max-height: 46vh; overflow: auto; border-radius: 8px; background: var(--bg); border: 1px solid var(--line);
+  font: 12px/1.6 var(--mono); color: var(--text); white-space: pre-wrap; word-break: break-all; user-select: text; }
+.job[data-status="paused"] .meta .state { color: var(--dim); }
+.job[data-status="paused"] .bar > i { background: var(--dim); box-shadow: none; }

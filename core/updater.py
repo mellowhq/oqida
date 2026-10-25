@@ -106,8 +106,10 @@ def _short(e):
 class YtdlpUpdater:
     """yt-dlp本体の更新。ダウンロード中は入れ替えないで、終わるまで待つ。"""
 
-    def __init__(self, is_busy):
+    def __init__(self, is_busy, get_skip=lambda: "", on_installed=lambda: None):
         self._is_busy = is_busy
+        self._get_skip = get_skip          # 巻き戻したときに「この版は入れない」と覚えておく値
+        self._on_installed = on_installed
         self._lock = threading.Lock()
         self._state = {"state": "idle", "current": "", "latest": "", "error": ""}
 
@@ -131,7 +133,10 @@ class YtdlpUpdater:
         try:
             r = tools.check_ytdlp_update()
             self._set(current=r["current"] or "", latest=r["latest"])
-            if r["available"]:
+            skip = (self._get_skip() or "").strip()
+            if r["available"] and skip and r["latest"].lstrip("vV") == skip:
+                self._set(state="skipped")                    # 巻き戻した版と同じ。自動では入れない（手動なら入れられる）
+            elif r["available"]:
                 self._set(state="available")
                 if auto_apply:
                     self._apply()
@@ -156,6 +161,7 @@ class YtdlpUpdater:
                     time.sleep(1)
             self._set(state="updating")
             tools.update_ytdlp()
+            self._on_installed()
             self._set(state="updated", current=tools.ytdlp_version() or "")
         except Exception as e:  # noqa: BLE001
             self._set(state="error", error=_short(e))

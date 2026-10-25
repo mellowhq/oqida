@@ -50,6 +50,10 @@
           <select data-setting="format">
             <option value="mp4">MP4</option>
             <option value="mp3">MP3</option>
+            <option value="m4a">M4A</option>
+            <option value="opus">Opus</option>
+            <option value="flac">FLAC</option>
+            <option value="wav">WAV</option>
             <option value="gif">GIF</option>
           </select>
         </label>
@@ -70,6 +74,10 @@
             <option value="128">128 kbps</option>
           </select>
         </label>
+        <div class="fld" id="ctlRangeOn" hidden>
+          <span data-i18n="label_range"></span>
+          <label class="switch sw"><input type="checkbox" id="rangeOn"><span></span></label>
+        </div>
         <label class="fld" id="ctlGifStart" hidden>
           <span data-i18n="label_gif_start"></span>
           <input id="gifStart" type="text" inputmode="decimal" value="0:00" autocomplete="off" spellcheck="false">
@@ -111,6 +119,10 @@
             <option value="1000">1 GB</option>
           </select>
         </label>
+        <div class="fld" id="ctlThumb">
+          <span data-i18n="label_thumb"></span>
+          <label class="switch sw"><input type="checkbox" data-setting="save_thumb"><span></span></label>
+        </div>
         <button class="btn primary" id="startBtn" data-i18n="start"></button>
       </div>
       <p class="gif-note" id="gifNote" data-i18n="gif_hint" hidden></p>
@@ -254,6 +266,13 @@
         </div>
         <div class="row">
           <div class="row-text">
+            <div class="row-title" data-i18n="s_ytdlp_back"></div>
+            <div class="row-sub" id="ytBackText"></div>
+          </div>
+          <button class="btn" id="ytBackBtn"></button>
+        </div>
+        <div class="row">
+          <div class="row-text">
             <div class="row-title" data-i18n="s_auto_yt"></div>
             <div class="row-sub" data-i18n="s_auto_yt_sub"></div>
           </div>
@@ -263,6 +282,31 @@
 
       <h2 class="grp" data-i18n="s_download"></h2>
       <div class="panel">
+        <div class="row">
+          <div class="row-text">
+            <div class="row-title" data-i18n="s_speed"></div>
+            <div class="row-sub" data-i18n="s_speed_sub"></div>
+          </div>
+          <select data-setting="speed_limit">
+            <option value="0" data-i18n="speed_none"></option>
+            <option value="0.5">0.5 MB/s</option>
+            <option value="1">1 MB/s</option>
+            <option value="2">2 MB/s</option>
+            <option value="5">5 MB/s</option>
+            <option value="10">10 MB/s</option>
+          </select>
+        </div>
+        <div class="row">
+          <div class="row-text">
+            <div class="row-title" data-i18n="s_history"></div>
+            <div class="row-sub" data-i18n="s_history_sub"></div>
+          </div>
+          <label class="switch"><input type="checkbox" data-setting="history_keep"><span></span></label>
+        </div>
+        <div class="row">
+          <div class="row-text"><div class="row-title" data-i18n="s_history_clear"></div></div>
+          <button class="btn" id="clearHistoryBtn" data-i18n="btn_clear"></button>
+        </div>
         <div class="row">
           <div class="row-text">
             <div class="row-title" data-i18n="s_cookies"></div>
@@ -314,6 +358,31 @@
     <div class="modal-actions">
       <button class="btn" id="updLater" data-i18n="upd_later"></button>
       <button class="btn primary" id="updNow" data-i18n="upd_now"></button>
+    </div>
+  </div>
+</div>
+
+<!-- 失敗の詳細ログ -->
+<div class="modal" id="logDialog" hidden role="dialog" aria-modal="true" aria-labelledby="logTitle">
+  <div class="modal-card wide">
+    <h2 id="logTitle" data-i18n="log_title"></h2>
+    <p class="small" data-i18n="log_hint"></p>
+    <pre class="logbox" id="logText"></pre>
+    <div class="modal-actions">
+      <button class="btn" id="logClose" data-i18n="log_close"></button>
+      <button class="btn primary" id="logCopy" data-i18n="log_copy"></button>
+    </div>
+  </div>
+</div>
+
+<!-- すでにダウンロード済みのとき -->
+<div class="modal" id="dupDialog" hidden role="dialog" aria-modal="true" aria-labelledby="dupTitle">
+  <div class="modal-card">
+    <h2 id="dupTitle" data-i18n="dup_title"></h2>
+    <p id="dupMsg"></p>
+    <div class="modal-actions">
+      <button class="btn" id="dupCancel" data-i18n="dup_cancel"></button>
+      <button class="btn primary" id="dupAgain" data-i18n="dup_again"></button>
     </div>
   </div>
 </div>

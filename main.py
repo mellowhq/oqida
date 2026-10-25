@@ -8,6 +8,7 @@ import threading
 from core import downloader, paths, tools
 from core import gif as gifmod
 from core import sizefit
+from core.netutil import is_newer
 from core.settings import Settings
 from core.updater import AppUpdater, YtdlpUpdater
 from core.version import APP_NAME, __version__
@@ -23,7 +24,9 @@ class Api:
         self._engine = downloader.Engine(self._settings)
         self._boot = tools.Bootstrap()
         self._app_upd = AppUpdater(on_exit=self._quit)
-        self._yt_upd = YtdlpUpdater(self._engine.busy)
+        self._yt_upd = YtdlpUpdater(
+            self._engine.busy, get_skip=lambda: self._settings.get("ytdlp_skip"),
+            on_installed=lambda: self._settings.set("ytdlp_skip", ""))
         self._window = None
         self._started = False
 
@@ -35,7 +38,8 @@ class Api:
             "jobs": self._engine.snapshot(),
             "setup": self._boot.snapshot(),
             "app_update": self._app_upd.snapshot(),
-            "ytdlp": dict(self._yt_upd.snapshot(), current=tools.ytdlp_version_cached()),
+            "ytdlp": dict(self._yt_upd.snapshot(), current=tools.ytdlp_version_cached(),
+                          previous=tools.previous_ytdlp_version(), skip=self._settings.get("ytdlp_skip")),
         }
 
     def startup(self):
@@ -101,21 +105,45 @@ class Api:
         return _read_clipboard()
 
     # ------------------------------------------------------------ ダウンロード
-    def add_download(self, url, gif=None):
+    def add_download(self, url, rng=None, force=False):
+        """rng: 区間（{start, length}）。GIFでは必須、MP4/MP3などでは「区間を指定」がオンのときだけ渡される"""
         s = self._settings
         try:
             fmt = s.get("format")
-            g = None
+            url = (url or "").strip()
+            g = section = None
             if fmt == "gif":
-                gi = gif or {}
-                g = {"start": gi.get("start", ""), "length": gi.get("length", "10"),
+                ri = rng or {}
+                g = {"start": ri.get("start", ""), "length": ri.get("length", "10"),
                      "width": s.get("gif_width"), "fps": s.get("gif_fps")}
                 gifmod.validate(g["start"], g["length"], g["width"], g["fps"])   # 先に確認して、画面に理由を返す
+            elif rng:
+                section = gifmod.validate_range(rng.get("start", ""), rng.get("length", ""))
+            if not force and fmt != "gif":
+                dup = self._engine.find_done(url, fmt)                        # 同じものを、もう一度落とそうとしていないか
+                if dup:
+                    return {"ok": False, "error": "duplicate", "title": dup["title"]}
             jid = self._engine.add(url, fmt, s.get("mp4_quality"), s.get("mp3_bitrate"), s.download_dir(), gif=g,
-                                   size_limit=sizefit.limit_bytes(s.get("size_limit_mb")))
+                                   size_limit=sizefit.limit_bytes(s.get("size_limit_mb")), section=section,
+                                   save_thumb=s.get("save_thumb"))
             return {"ok": True, "id": jid}
         except ValueError as e:
             return {"ok": False, "error": str(e)}
+
+    def pause(self, job_id):
+        self._engine.pause(job_id)
+
+    def resume(self, job_id):
+        self._engine.resume(job_id)
+
+    def get_job_log(self, job_id):
+        return self._engine.get_log(job_id)
+
+    def copy_text(self, text):
+        return {"ok": _write_clipboard(str(text or ""))}
+
+    def clear_history(self):
+        self._engine.clear_history()
 
     # ------------------------------------------------------------ GIF変換（パソコン内の動画）
     def pick_video(self):
@@ -193,7 +221,26 @@ class Api:
         self._yt_upd.check()
 
     def update_ytdlp(self):
+        self._settings.set("ytdlp_skip", "")          # 手動で更新するときは、見送りを解除する
         self._yt_upd.update()
+
+    def rollback_ytdlp(self):
+        """yt-dlpを前の版に戻す（もう一度押すと、新しい版に戻る）"""
+        if self._engine.busy():
+            return {"ok": False, "error": "busy"}
+        if not tools.previous_ytdlp_version():
+            return {"ok": False, "error": "no_previous"}
+        try:
+            now, before = tools.rollback_ytdlp()
+        except Exception:
+            return {"ok": False, "error": "failed"}
+        tools._ver_cache.update(path=None, mtime=None)            # 版の表示を取り直す
+        # 古い版へ戻したときは、戻す前の（壊れている）版を自動更新で入れ直さないよう覚えておく
+        if now and before and is_newer(before, now):
+            self._settings.set("ytdlp_skip", before.lstrip("vV"))
+        else:
+            self._settings.set("ytdlp_skip", "")
+        return {"ok": True, "current": now, "previous": before}
 
     # ------------------------------------------------------------ 終了
     def _quit(self):
@@ -235,6 +282,20 @@ def _read_clipboard():
         return ""
 
 
+def _write_clipboard(text):
+    """文字をクリップボードに入れる（ログのコピー用）"""
+    if not paths.IS_WINDOWS:
+        return False
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             "[Console]::InputEncoding=[Text.Encoding]::UTF8; $t=[Console]::In.ReadToEnd(); Set-Clipboard -Value $t"],
+            input=text.encode("utf-8"), capture_output=True, timeout=10, creationflags=NO_WINDOW)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
 def _single_instance():
     if not paths.IS_WINDOWS:
         return True
@@ -250,8 +311,49 @@ def _single_instance():
     return True
 
 
+def _webview2_installed():
+    """画面表示に使うWebView2が入っているか（Windowsのみ）。確認できないときはTrue扱いで起動を続ける。"""
+    if not paths.IS_WINDOWS:
+        return True
+    try:
+        import winreg
+    except Exception:
+        return True
+    key = r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+    for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        for sub in (key, key.replace(r"\WOW6432Node", "")):
+            try:
+                with winreg.OpenKey(root, sub) as k:
+                    v, _ = winreg.QueryValueEx(k, "pv")
+                    if v and v != "0.0.0.0":
+                        return True
+            except OSError:
+                pass
+    return False
+
+
+def _warn_no_webview2():
+    """WebView2が無いと画面が真っ白になるので、ダウンロード先を案内する。"""
+    msg = ("OQIDA の画面表示に必要な「Microsoft Edge WebView2 ランタイム」が見つかりませんでした。\n"
+           "下のページから無料で入手してインストールしたあと、OQIDA をもう一度起動してください。\n\n"
+           "https://developer.microsoft.com/microsoft-edge/webview2/")
+    try:
+        import ctypes
+        if ctypes.windll.user32.MessageBoxW(0, msg, "OQIDA", 0x40) == 0:
+            raise OSError
+    except Exception:
+        try:
+            import webbrowser
+            webbrowser.open("https://developer.microsoft.com/microsoft-edge/webview2/")
+        except Exception:
+            pass
+
+
 def main():
     if not _single_instance():
+        return
+    if not _webview2_installed():
+        _warn_no_webview2()
         return
     import webview
 

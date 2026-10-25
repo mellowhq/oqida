@@ -4,14 +4,21 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
 
 from . import gif as gifmod
-from . import sizefit
-from . import paths, tools
+from . import history, paths, sizefit, tools
+from .version import __version__
 
 URL_RE = re.compile(r"^https?://\S+$", re.I)
+AUDIO_FORMATS = ("mp3", "m4a", "opus", "flac", "wav")
+LOSSY_AUDIO = ("mp3", "m4a", "opus")
+FORMATS = ("mp4", "gif") + AUDIO_FORMATS
+FINAL = history.FINAL
+LOG_LINES = 500
 
 # yt-dlpの出力に付ける目印（アプリ側でこの行だけ読み取る）
 P_TITLE = "OQIDA_TITLE|"
@@ -49,13 +56,15 @@ def classify_error(text: str) -> str:
     return "unknown"
 
 
-def build_args(job, outdir, ytdlp, ffdir, deno, cookies_browser="none"):
+def build_args(job, outdir, ytdlp, ffdir, deno, cookies_browser="none", speed_limit="0"):
     """yt-dlpに渡す引数を組み立てる（実行はしない。テストしやすいように分けてある）。"""
+    section = job.get("section")
+    suffix = gifmod.range_suffix(section) if section else ""          # 区間を指定したときは、ファイル名に印を付ける
     a = [
         ytdlp,
         "--no-playlist", "--newline", "--progress", "--color", "never",
         "--windows-filenames", "--no-mtime",
-        "-o", os.path.join(outdir, "%(title).150B.%(ext)s"),
+        "-o", os.path.join(outdir, "%(title).150B" + suffix + ".%(ext)s"),
         "--print", f"{P_TITLE}%(title)s",
         "--print", f"{P_SITE}%(webpage_url_domain)s",
         "--print", f"{P_THUMB}%(thumbnail)s",
@@ -71,16 +80,23 @@ def build_args(job, outdir, ytdlp, ffdir, deno, cookies_browser="none"):
         a += ["--js-runtimes", f"deno:{deno}"]
     if cookies_browser and cookies_browser != "none":
         a += ["--cookies-from-browser", cookies_browser]
+    if speed_limit and str(speed_limit) != "0":
+        a += ["--limit-rate", f"{speed_limit}M"]
 
-    if job["fmt"] == "gif":
+    fmt = job["fmt"]
+    embed_thumb = False
+    if fmt == "gif":
         # GIFには高画質は要らないので720p以下を、指定区間だけ取ってくる（長い動画でも速い）
         a += ["-f", "bv*[height<=720]/b[height<=720]/bv*/b",
               "--download-sections", gifmod.section_arg(job["gif"]), "--force-keyframes-at-cuts"]
-    elif job["fmt"] == "mp3":
-        a += ["-f", "ba/b", "-x", "--audio-format", "mp3",
-              "--audio-quality", f"{job['bitrate']}K", "--embed-metadata"]
-        if not job.get("size_limit"):      # 上限があるときは、ジャケット画像の分も節約する
-            a += ["--embed-thumbnail", "--convert-thumbnails", "jpg"]
+    elif fmt in AUDIO_FORMATS:
+        pick = {"m4a": "ba[ext=m4a]/ba/b", "opus": "ba[acodec=opus]/ba/b"}.get(fmt, "ba/b")
+        a += ["-f", pick, "-x", "--audio-format", fmt, "--embed-metadata"]
+        if fmt in LOSSY_AUDIO:
+            a += ["--audio-quality", f"{job['bitrate']}K"]
+        embed_thumb = fmt in ("mp3", "m4a") and not job.get("size_limit")   # 上限があるときは、ジャケット画像の分も節約する
+        if section:
+            a += ["--download-sections", gifmod.section_arg(section), "--force-keyframes-at-cuts"]
     else:
         q = job["quality"]
         lim = job.get("size_limit", 0)
@@ -88,6 +104,15 @@ def build_args(job, outdir, ytdlp, ffdir, deno, cookies_browser="none"):
             q = "720" if lim <= 25 * sizefit.MB else "1080" if lim <= 100 * sizefit.MB else "best"
         sort = "res,vcodec:h264,acodec:m4a" if q == "best" else f"res:{q},vcodec:h264,acodec:m4a"
         a += ["-f", "bv*+ba/b", "-S", sort, "--merge-output-format", "mp4", "--embed-metadata"]
+        if section:
+            a += ["--download-sections", gifmod.section_arg(section), "--force-keyframes-at-cuts"]
+    want_thumb = bool(job.get("save_thumb")) and fmt != "gif"
+    if embed_thumb:
+        a += ["--embed-thumbnail"]
+    if want_thumb:
+        a += ["--write-thumbnail"]
+    if embed_thumb or want_thumb:
+        a += ["--convert-thumbnails", "jpg"]
     a.append(job["url"])
     return a
 
@@ -112,25 +137,40 @@ class Engine:
         self._procs = {}
         self._stop = False
         self._busy = False
+        self._load_history()
         threading.Thread(target=self._worker, daemon=True).start()
 
     # ---------------------------------------------------------- 公開操作
-    def add(self, url, fmt, quality, bitrate, outdir, gif=None, size_limit=0):
+    def _new_job(self, **kw):
+        job = {
+            "id": next(self._ids), "url": "", "fmt": "mp4", "quality": "best", "bitrate": "320", "kind": "download",
+            "outdir": "", "gif": None, "section": None, "save_thumb": False, "size_limit": 0, "size": 0, "fitted": False,
+            "stage": "", "status": "queued", "title": "", "site": "", "thumb": "", "percent": 0.0, "speed": 0.0, "eta": 0,
+            "filepath": "", "error": "", "error_detail": "", "created": time.time(),
+            "_cancel": False, "_pause": False, "_streams": [], "_log": [],
+        }
+        job.update(kw)
+        return job
+
+    def add(self, url, fmt, quality, bitrate, outdir, gif=None, size_limit=0, section=None, save_thumb=False):
         url = (url or "").strip()
         if not URL_RE.match(url):
             raise ValueError("bad_url")
+        if fmt not in FORMATS:
+            raise ValueError("bad_format")
         if fmt == "gif":
             if not isinstance(gif, dict):
                 raise ValueError("bad_gif")
             gif = gifmod.validate(gif.get("start"), gif.get("length"), gif.get("width"), gif.get("fps"))
+            section = None
         else:
             gif = None
-        job = {
-            "id": next(self._ids), "url": url, "fmt": fmt, "quality": quality, "bitrate": bitrate,
-            "kind": "download", "outdir": outdir, "gif": gif, "size_limit": int(size_limit or 0), "size": 0, "fitted": False, "stage": "", "status": "queued", "title": "", "site": "", "thumb": "", "percent": 0.0, "speed": 0.0, "eta": 0,
-            "filepath": "", "error": "", "error_detail": "", "created": time.time(),
-            "_cancel": False, "_streams": [],
-        }
+            if section is not None:
+                if not isinstance(section, dict):
+                    raise ValueError("bad_range")
+                section = gifmod.validate_range(section.get("start"), section.get("length"))
+        job = self._new_job(url=url, fmt=fmt, quality=quality, bitrate=str(bitrate), outdir=outdir, gif=gif,
+                            section=section, save_thumb=bool(save_thumb) and fmt != "gif", size_limit=int(size_limit or 0))
         with self._cv:
             self._jobs.append(job)
             self._cv.notify()
@@ -143,18 +183,107 @@ class Engine:
         if not isinstance(gif, dict):
             raise ValueError("bad_gif")
         g = gifmod.validate(gif.get("start"), gif.get("length"), gif.get("width"), gif.get("fps"))
-        job = {
-            "id": next(self._ids), "url": src, "fmt": "gif", "quality": "", "bitrate": "", "kind": "convert",
-            "outdir": os.path.dirname(os.path.abspath(src)), "gif": g, "size_limit": int(size_limit or 0), "size": 0,
-            "fitted": False, "stage": "", "status": "queued",
-            "title": os.path.splitext(os.path.basename(src))[0], "site": "", "thumb": "", "percent": 0.0,
-            "speed": 0.0, "eta": 0, "filepath": "", "error": "", "error_detail": "", "created": time.time(),
-            "_cancel": False, "_streams": [],
-        }
+        job = self._new_job(url=src, fmt="gif", quality="", bitrate="", kind="convert",
+                            outdir=os.path.dirname(os.path.abspath(src)), gif=g, size_limit=int(size_limit or 0),
+                            title=os.path.splitext(os.path.basename(src))[0])
         with self._cv:
             self._jobs.append(job)
             self._cv.notify()
         return job["id"]
+
+    # ---------------------------------------------------------- 履歴
+    def _history_on(self):
+        try:
+            return bool(self.settings.get("history_keep"))
+        except Exception:
+            return False
+
+    def _load_history(self):
+        if not self._history_on():
+            return
+        for e in history.load():
+            job = self._new_job(**e)
+            job["percent"] = 100.0 if job["status"] == "done" else 0.0
+            self._jobs.append(job)
+
+    def _persist(self):
+        if not self._history_on():
+            return
+        with self._cv:
+            entries = [{k: j.get(k) for k in history.KEYS} for j in self._jobs if j["status"] in FINAL]
+        try:
+            history.save(entries)
+        except OSError:
+            pass                                                          # 保存できなくても、ダウンロード自体は止めない
+
+    def clear_history(self):
+        """終わったものを一覧から消し、履歴ファイルも消す"""
+        self.clear_finished()
+        history.delete_file()
+
+    def find_done(self, url, fmt):
+        """同じURL・同じ形式で、すでに保存済み（ファイルも残っている）のものを探す"""
+        with self._cv:
+            for j in reversed(self._jobs):
+                if (j["status"] == "done" and j["url"] == url and j["fmt"] == fmt and j["kind"] == "download"
+                        and j["filepath"] and os.path.exists(j["filepath"])):
+                    return {k: v for k, v in j.items() if not k.startswith("_")}
+        return None
+
+    # ---------------------------------------------------------- ログ
+    @staticmethod
+    def _redact(text):
+        home = str(Path.home())
+        return text.replace(home, "~") if home else text
+
+    def _log(self, job, line):
+        with self._cv:
+            buf = job["_log"]
+            buf.append(self._redact(line))
+            if len(buf) > LOG_LINES:
+                del buf[: len(buf) - LOG_LINES]
+
+    def get_log(self, jid):
+        """失敗の原因を調べるための文章（コピーして共有できる）"""
+        ver = tools.ytdlp_version_cached() or tools.ytdlp_version() or "?"      # 時間がかかることがあるので、ロックの外で調べる
+        with self._cv:
+            j = self._find(jid)
+            if not j:
+                return ""
+            head = [
+                f"OQIDA {__version__} / yt-dlp {ver} / {os.name} {sys.platform}",
+                f"site: {j['site'] or '-'} / format: {j['fmt']} / status: {j['status']} / error: {j['error'] or '-'}",
+                f"url: {self._redact(j['url'])}",
+            ]
+            body = list(j["_log"]) or ([self._redact(j["error_detail"])] if j["error_detail"] else [])
+            return "\n".join(head + [""] + body)
+
+    # ---------------------------------------------------------- 一時停止・再開
+    def pause(self, jid):
+        """ダウンロード中のものを止める（途中までのファイルは残り、再開すると続きから）"""
+        with self._cv:
+            j = self._find(jid)
+            if not j or j["kind"] != "download":
+                return
+            if j["status"] == "queued":
+                j["status"] = "paused"
+                return
+            if j["status"] != "running" or j["stage"] == "convert":
+                return
+            j["_pause"] = True
+            p = self._procs.get(jid)
+        if p:
+            try:
+                p.terminate()
+            except Exception:
+                pass
+
+    def resume(self, jid):
+        with self._cv:
+            j = self._find(jid)
+            if j and j["status"] == "paused":
+                j.update(status="queued", _pause=False, _streams=[])
+                self._cv.notify()
 
     def snapshot(self):
         with self._cv:
@@ -173,7 +302,7 @@ class Engine:
             if not j:
                 return
             j["_cancel"] = True
-            if j["status"] == "queued":
+            if j["status"] in ("queued", "paused"):
                 j["status"] = "canceled"
             p = self._procs.get(jid)
         if p:
@@ -187,18 +316,20 @@ class Engine:
             j = self._find(jid)
             if j and j["status"] not in ("running",):
                 self._jobs.remove(j)
+        self._persist()
 
     def retry(self, jid):
         with self._cv:
             j = self._find(jid)
             if j and j["status"] in ("error", "canceled"):
-                j.update(status="queued", stage="", size=0, fitted=False, percent=0.0, speed=0.0, eta=0, error="", error_detail="",
-                         filepath="", _cancel=False, _streams=[])
+                j.update(status="queued", stage="", size=0, fitted=False, percent=0.0, speed=0.0, eta=0, error="",
+                         error_detail="", filepath="", _cancel=False, _pause=False, _streams=[], _log=[])
                 self._cv.notify()
 
     def clear_finished(self):
         with self._cv:
-            self._jobs = [j for j in self._jobs if j["status"] in ("queued", "running")]
+            self._jobs = [j for j in self._jobs if j["status"] not in FINAL]
+        self._persist()
 
     def shutdown(self):
         with self._cv:
@@ -227,12 +358,15 @@ class Engine:
             try:
                 self._run(job)
             except Exception as e:  # noqa: BLE001
+                self._log(job, f"[OQIDA] unexpected error: {e!r}")
                 self._fail(job, "unknown", str(e))
             finally:
                 with self._cv:
                     self._busy = False
+                self._persist()
 
     def _fail(self, job, code, detail=""):
+        self._log(job, f"[OQIDA] failed: {code}" + (f" / {detail[-300:]}" if detail else ""))
         with self._cv:
             job["status"] = "error"
             job["error"] = code
@@ -274,7 +408,17 @@ class Engine:
                 shutil.rmtree(workdir, ignore_errors=True)
 
     def _run_ytdlp(self, job, ytdlp, ffdir, deno, outdir):
-        args = build_args(job, outdir, ytdlp, ffdir, deno, self.settings.get("cookies_browser"))
+        args = build_args(job, outdir, ytdlp, ffdir, deno, self.settings.get("cookies_browser"),
+                          self.settings.get("speed_limit"))
+        shown, skip = [], False
+        for x in args:                                          # アプリ内部用の長い指定は、ログを読みにくくするだけなので省く
+            if skip:
+                skip = False
+            elif x in ("--print", "--progress-template"):
+                skip = True
+            else:
+                shown.append(x)
+        self._log(job, "$ " + " ".join(shown))
         env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
         p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
                              creationflags=tools.NO_WINDOW, stdin=subprocess.DEVNULL)
@@ -285,6 +429,8 @@ class Engine:
             for raw in p.stdout:
                 line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
                 self._on_line(job, line)
+                if not line.startswith((P_PROG, P_PP)):        # 進み具合の行は、ログが読みにくくなるので載せない
+                    self._log(job, line)
                 if line.startswith("ERROR:"):
                     saw_error.append(line)
                 tail.append(line)
@@ -298,7 +444,16 @@ class Engine:
                 job["status"] = "canceled"
             return
         if rc == 0 and job["filepath"]:
+            with self._cv:
+                job["_pause"] = False
             return                                              # 成功。完了にするのは仕上げ（サイズ調整）のあと
+        with self._cv:
+            paused = job["_pause"]
+        if paused:                                              # 一時停止。途中までのファイルは残してあるので、再開すると続きから
+            with self._cv:
+                job.update(status="paused", speed=0.0, eta=0, _pause=False)
+            self._log(job, "[OQIDA] paused")
+            return
         text = "\n".join(saw_error) or "\n".join(tail)
         self._fail(job, classify_error(text), text)
 
@@ -320,6 +475,7 @@ class Engine:
                 elif line and "=" not in line:
                     tail.append(line)
                     tail = tail[-8:]
+                    self._log(job, "[ffmpeg] " + line)
             rc = p.wait()
         finally:
             with self._cv:
@@ -350,8 +506,12 @@ class Engine:
             job.update(status="done", percent=100.0, speed=0.0, eta=0, stage="", size=size)
 
     def _shrink(self, job, ffdir, path, limit):
-        """できあがったMP4/MP3を、長さから逆算した設定で作り直して上限に収める。成功したら True"""
+        """できあがったMP4・音声を、長さから逆算した設定で作り直して上限に収める。成功したら True"""
         ff = tools.ffmpeg_exe(ffdir)
+        fmt = job["fmt"]
+        if fmt in ("flac", "wav"):                              # ロスレスは、音質を下げずに小さくはできない
+            self._fail(job, "size_fail", "lossless audio cannot be fitted; choose MP3, M4A or Opus")
+            return False
         dur = gifmod.probe_duration(tools.ffprobe_exe(ffdir), path, tools.NO_WINDOW)
         if not dur:
             self._fail(job, "size_fail", "could not read the duration")
@@ -359,15 +519,14 @@ class Engine:
         with self._cv:
             job.update(stage="convert", speed=0.0, eta=0, fitted=True)
         tmp = path + ".fit" + (os.path.splitext(path)[1] or ".tmp")
-        is_mp3 = job["fmt"] == "mp3"
-        if is_mp3:
-            wanted = int(job["bitrate"] or 320)
-            first = sizefit.mp3_bitrate_for(dur, limit, wanted)
+        is_audio = fmt in LOSSY_AUDIO
+        if is_audio:
+            first = sizefit.mp3_bitrate_for(dur, limit, int(job["bitrate"] or 320))
             if not first:
                 self._fail(job, "size_fail", "even the lowest bitrate does not fit")
                 return False
-            ladder = [b for b in sizefit.MP3_LADDER if b <= first]
-            settings = ladder[:2]                               # まず計算どおり、だめならもう1段下げる
+            settings = [b for b in sizefit.MP3_LADDER if b <= first][:2]     # まず計算どおり、だめならもう1段下げる
+            codec = {"mp3": "libmp3lame", "m4a": "aac", "opus": "libopus"}[fmt]
         else:
             plan = sizefit.video_plan(dur, limit)
             if not plan:
@@ -375,11 +534,11 @@ class Engine:
                 return False
             settings = [plan]
         i, sz = 0, 0
-        while i < len(settings) or (not is_mp3 and i < 3):
+        while i < len(settings) or (not is_audio and i < 3):
             cur = settings[i]
-            if is_mp3:
+            if is_audio:
                 args = [ff, "-y", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-i", path,
-                        "-vn", "-c:a", "libmp3lame", "-b:a", f"{cur}k", "-map_metadata", "0", tmp]
+                        "-vn", "-c:a", codec, "-b:a", f"{cur}k", "-map_metadata", "0", tmp]
             else:
                 v = cur["v_kbps"]
                 args = [ff, "-y", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-i", path,
@@ -401,7 +560,7 @@ class Engine:
                 os.replace(tmp, path)
                 return True
             i += 1
-            if not is_mp3 and i < 3:
+            if not is_audio and i < 3:
                 nxt = sizefit.retry_video_plan(cur, sz, limit)
                 if not nxt:
                     break

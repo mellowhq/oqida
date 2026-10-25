@@ -10,11 +10,15 @@ DEFAULTS = {
     "accent": "#ff8a3d",        # アクセントカラー（#rrggbb）
     "language": "auto",         # auto / ja / en
     "download_dir": "",         # 空ならデフォルト
-    "format": "mp4",            # mp4 / mp3 / gif
+    "format": "mp4",            # mp4 / mp3 / m4a / opus / flac / wav / gif
     "mp4_quality": "best",      # best / 1080 / 720 / 480
     "mp3_bitrate": "320",       # 320 / 192 / 128
     "gif_width": "480",         # 320 / 480 / 640
     "gif_fps": "15",            # 10 / 15 / 20
+    "speed_limit": "0",         # 0=無制限 / 0.5 / 1 / 2 / 5 / 10 (MB/秒)
+    "save_thumb": False,        # サムネイル画像も保存する
+    "history_keep": True,       # 履歴を残す
+    "ytdlp_skip": "",           # 巻き戻したときに、見送るyt-dlpの版
     "size_limit_mb": "0",       # 0=上限なし / 8 / 10 / 25 / 50 / 100 / 500 / 1000
     "cookies_browser": "none",  # none / edge / chrome / firefox
     "auto_check_app": True,
@@ -24,7 +28,8 @@ DEFAULTS = {
 CHOICES = {
     "theme": {"dark", "light", "system"},
     "language": {"auto", "ja", "en"},
-    "format": {"mp4", "mp3", "gif"},
+    "format": {"mp4", "mp3", "m4a", "opus", "flac", "wav", "gif"},
+    "speed_limit": {"0", "0.5", "1", "2", "5", "10"},
     "mp4_quality": {"best", "1080", "720", "480"},
     "mp3_bitrate": {"320", "192", "128"},
     "gif_width": {"320", "480", "640"},
@@ -64,10 +69,12 @@ class Settings:
     def _valid(key, value):
         if key in CHOICES:
             return value in CHOICES[key]
-        if key in ("auto_check_app", "auto_update_ytdlp"):
+        if key in ("auto_check_app", "auto_update_ytdlp", "save_thumb", "history_keep"):
             return isinstance(value, bool)
         if key == "download_dir":
             return isinstance(value, str)
+        if key == "ytdlp_skip":
+            return isinstance(value, str) and re.fullmatch(r"[0-9A-Za-z.+_\-]{0,40}", value) is not None
         if key == "accent":
             return isinstance(value, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", value) is not None
         return False

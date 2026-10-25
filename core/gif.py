@@ -37,6 +37,26 @@ def validate(start, length, width, fps) -> dict:
     return {"start": round(st, 3), "length": round(ln, 3), "width": w, "fps": f}
 
 
+def validate_range(start, length, max_length=6 * 3600) -> dict:
+    """MP4/MP3などの区間指定の確認。形式が違えば ValueError('bad_time')、範囲外なら ValueError('bad_range')"""
+    st, ln = parse_time(start), parse_time(length)
+    if st < 0 or st > 24 * 3600 or not (MIN_LENGTH <= ln <= max_length):
+        raise ValueError("bad_range")
+    return {"start": round(st, 3), "length": round(ln, 3)}
+
+
+def hms(sec) -> str:
+    """90 → '1m30s'、3725 → '1h02m05s'（ファイル名に使う）"""
+    n = int(sec)
+    h, m, s = n // 3600, (n % 3600) // 60, n % 60
+    return f"{h}h{m:02d}m{s:02d}s" if h else f"{m}m{s:02d}s"
+
+
+def range_suffix(r) -> str:
+    """区間を指定して保存したときのファイル名の末尾  例: ' [1m20s-3m45s]'"""
+    return f" [{hms(r['start'])}-{hms(r['start'] + r['length'])}]"
+
+
 def section_arg(g) -> str:
     """yt-dlpの --download-sections に渡す値"""
     return f"*{g['start']:g}-{g['start'] + g['length']:g}"
