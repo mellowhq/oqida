@@ -173,12 +173,16 @@ class Api:
         s = self._settings
         gi = gif or {}
         try:
+            ffdir = tools.ffmpeg_dir() if os.path.isfile(path or "") else None
+            dur = gifmod.probe_duration(tools.ffprobe_exe(ffdir), path, tools.NO_WINDOW) if ffdir else None
+            if gi.get("whole"):
+                # 区間オフ = 動画まるごと（GIFは最長60秒なので、長い場合は先頭60秒）
+                length = min(dur or 10, gifmod.MAX_LENGTH)
+                gi = {"start": "0", "length": str(round(length, 3))}
             g = {"start": gi.get("start", ""), "length": gi.get("length", "10"),
                  "width": s.get("gif_width"), "fps": s.get("gif_fps")}
             v = gifmod.validate(g["start"], g["length"], g["width"], g["fps"])
             # 動画の長さを超えていたら、終わりに合わせて切り詰める。開始が動画の外なら、はっきりエラーにする
-            ffdir = tools.ffmpeg_dir() if os.path.isfile(path or "") else None
-            dur = gifmod.probe_duration(tools.ffprobe_exe(ffdir), path, tools.NO_WINDOW) if ffdir else None
             if dur:
                 if v["start"] >= dur - 0.05:
                     raise ValueError("bad_range")
@@ -188,6 +192,19 @@ class Api:
                         raise ValueError("bad_range")
                 g["start"], g["length"] = v["start"], v["length"]
             jid = self._engine.add_local(path, g, size_limit=sizefit.limit_bytes(s.get("size_limit_mb")))
+            return {"ok": True, "id": jid}
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+
+    def convert_file(self, path, fmt, rng=None):
+        """パソコン内の動画/音声を、別の形式に変換する。rng があればその区間だけ。"""
+        s = self._settings
+        try:
+            section = None
+            if rng:
+                section = gifmod.validate_range(rng.get("start", ""), rng.get("length", ""))
+            jid = self._engine.add_transcode(path, fmt, section=section,
+                                             size_limit=sizefit.limit_bytes(s.get("size_limit_mb")))
             return {"ok": True, "id": jid}
         except ValueError as e:
             return {"ok": False, "error": str(e)}

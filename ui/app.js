@@ -176,6 +176,13 @@ function renderSettings() {
   const limited = String(st.size_limit_mb) !== "0";
   $("#sizeNote").hidden = !limited;
   $("#cvSizeNote").hidden = !limited;
+  $("#tcSizeNote").hidden = !limited;
+  // GIF変換ページ: 区間オフなら開始/終了/長さを隠す
+  const cvRangeOn = $("#cvRangeOn").checked;
+  $$(".cv-range").forEach((el) => (el.hidden = !cvRangeOn));
+  // ファイル変換ページ: 区間オンのときだけ表示。音声のロスレス(FLAC/WAV)はサイズ上限の対象外の注意は size_note で足りる
+  const tcRangeOn = $("#tcRangeOn").checked;
+  $$(".tc-range").forEach((el) => (el.hidden = !tcRangeOn));
   $("#folderPath").textContent = st.download_dir_effective;
   $("#folderPath").title = st.download_dir_effective;
   renderSwatches();
@@ -245,6 +252,9 @@ function makeRange(startId, endId, lenId, getDuration) {
 let cvFile = null;   // GIF変換で選んだファイル { path, name, duration }
 const dlRange = makeRange("gifStart", "gifEnd", "gifLen", () => null);
 const cvRange = makeRange("cvStart", "cvEnd", "cvLen", () => (cvFile && cvFile.duration) || null);
+let tcFile = null;   // ファイル変換で選んだファイル
+const tcRange = makeRange("tcStart", "tcEnd", "tcLen", () => (tcFile && tcFile.duration) || null);
+tcRange.setMax(MAX_MEDIA);
 
 /* ---------------- ダウンロード操作 ---------------- */
 let pendingDup = null;   // 「もう一度ダウンロード」を選ばれたときのために覚えておく
@@ -349,11 +359,13 @@ function syncList(container, jobs, seen) {
 }
 const isDone = (j) => !["queued", "running"].includes(j.status);
 function renderJobs() {
-  const dl = S.jobs.filter((j) => j.kind !== "convert");
-  const cv = S.jobs.filter((j) => j.kind === "convert");
+  const dl = S.jobs.filter((j) => j.kind !== "convert" && j.kind !== "transcode");
+  const cv = S.jobs.filter((j) => j.kind === "convert");       // GIF変換
+  const tc = S.jobs.filter((j) => j.kind === "transcode");     // ファイル変換
   const seen = new Set();
   syncList($("#queue"), dl, seen);
   syncList($("#cvQueue"), cv, seen);
+  syncList($("#tcQueue"), tc, seen);
   for (const [id, el] of rows) if (!seen.has(id)) { el.remove(); rows.delete(id); }
   $("#clearBtn").hidden = !dl.some(isDone);
   $("#emptyBox").hidden = dl.length > 0;
@@ -362,6 +374,9 @@ function renderJobs() {
   $("#cvClear").hidden = !cv.some(isDone);
   $("#cvHead").hidden = cv.length === 0;
   $("#cvLabel").textContent = t("cv_list") + (cv.length ? " (" + cv.length + ")" : "");
+  $("#tcClear").hidden = !tc.some(isDone);
+  $("#tcHead").hidden = tc.length === 0;
+  $("#tcLabel").textContent = t("tc_list") + (tc.length ? " (" + tc.length + ")" : "");
 }
 
 /* ---------------- GIF変換（パソコン内の動画） ---------------- */
@@ -380,12 +395,39 @@ function setCvFile(info) {
   $("#cvGo").disabled = false;
 }
 $("#cvPick").addEventListener("click", async () => setCvFile(await api.pick_video()));
+$("#cvRangeOn").addEventListener("change", () => renderSettings());
 $("#cvGo").addEventListener("click", async () => {
   if (!cvFile) { toast(t("cv_pick_first"), true); return; }
-  const r = await api.convert_gif(cvFile.path, cvRange.value());
+  const g = $("#cvRangeOn").checked ? cvRange.value() : { whole: true };   // 区間オフ = 動画まるごと
+  const r = await api.convert_gif(cvFile.path, g);
   if (r.ok) await poll(); else toast(t("e_" + (r.error || "convert")), true);
 });
 $("#cvClear").addEventListener("click", async () => { await api.clear_finished(); await poll(); });
+
+/* ---------------- ファイル変換（パソコン内の動画/音声 → 別の形式） ---------------- */
+function setTcFile(info) {
+  if (!info || !info.ok) { if (info && info.error && info.error !== "canceled") toast(t("e_" + (info.error === "bad_file" ? "bad_file" : "drop_na")), true); return; }
+  tcFile = info;
+  tcRange.reset();
+  $("#tcFileName").textContent = info.name;
+  $("#tcFileName").title = info.path;
+  $("#tcFileMeta").textContent = info.duration ? t("cv_len", { d: fmtDur(info.duration) }) : "";
+  $("#tcDrop").classList.add("has-file");
+  $("#tcGo").disabled = false;
+}
+$("#tcPick").addEventListener("click", async () => setTcFile(await api.pick_video()));
+$("#tcRangeOn").addEventListener("change", () => renderSettings());
+$("#tcGo").addEventListener("click", async () => {
+  if (!tcFile) { toast(t("cv_pick_first"), true); return; }
+  const rng = $("#tcRangeOn").checked ? tcRange.value() : null;
+  const r = await api.convert_file(tcFile.path, S.settings.conv_format, rng);
+  if (r.ok) await poll(); else toast(t("e_" + (r.error || "convert")), true);
+});
+$("#tcClear").addEventListener("click", async () => { await api.clear_finished(); await poll(); });
+const tdz = $("#tcDrop");
+tdz.addEventListener("dragenter", () => tdz.classList.add("over"));
+tdz.addEventListener("dragleave", () => tdz.classList.remove("over"));
+tdz.addEventListener("drop", () => tdz.classList.remove("over"));
 // 動画ファイルをウィンドウに落としたとき、ブラウザが勝手にそのファイルを開かないようにする。
 // 実際のファイルの場所は、アプリ本体(Python)側が受け取って window.onFileDropped で知らせる。
 ["dragover", "drop"].forEach((ev) => window.addEventListener(ev, (e) => e.preventDefault()));
@@ -393,7 +435,11 @@ const dz = $("#cvDrop");
 dz.addEventListener("dragenter", () => dz.classList.add("over"));
 dz.addEventListener("dragleave", () => dz.classList.remove("over"));
 dz.addEventListener("drop", () => dz.classList.remove("over"));
-window.onFileDropped = (info) => { showView("gif"); setCvFile(info); };
+window.onFileDropped = (info) => {
+  const view = $(".nav-item.is-active") && $(".nav-item.is-active").dataset.view;
+  if (view === "conv") setTcFile(info);
+  else { showView("gif"); setCvFile(info); }
+};
 
 /* ---------------- 初回セットアップ ---------------- */
 const PART_NAMES = { ytdlp: "yt-dlp", ffmpeg: "ffmpeg", deno: "Deno" };

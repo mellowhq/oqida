@@ -15,6 +15,7 @@ DEFAULTS = {
     "mp3_bitrate": "320",       # 320 / 192 / 128
     "gif_width": "480",         # 320 / 480 / 640
     "gif_fps": "15",            # 10 / 15 / 20
+    "conv_format": "mp4",       # ファイル変換の出力形式
     "speed_limit": "0",         # 0=無制限 / 0.5 / 1 / 2 / 5 / 10 (MB/秒)
     "save_thumb": False,        # サムネイル画像も保存する
     "history_keep": True,       # 履歴を残す
@@ -34,6 +35,7 @@ CHOICES = {
     "mp3_bitrate": {"320", "192", "128"},
     "gif_width": {"320", "480", "640"},
     "gif_fps": {"10", "15", "20"},
+    "conv_format": {"mp4", "mp3", "m4a", "opus", "flac", "wav"},
     "size_limit_mb": {"0", "8", "10", "25", "50", "100", "500", "1000"},
     "cookies_browser": {"none", "edge", "chrome", "firefox"},
 }

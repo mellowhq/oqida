@@ -412,3 +412,51 @@ def test_titlebar_called_on_theme_change(page):
     page.wait_for_timeout(100)
     calls = page.evaluate("window.__tb")
     assert False in calls and True in calls                           # ライト=false / ダーク=true を伝えている
+
+
+def test_gif_range_toggle(page):
+    page.click(".nav-item[data-view=gif]")
+    assert page.is_visible("#cvRangeOn") and page.is_checked("#cvRangeOn")   # 既定はオン
+    assert page.is_visible("#cvStart") and page.is_visible("#cvLen")
+    page.uncheck("#cvRangeOn")
+    assert page.is_hidden("#cvStart") and page.is_hidden("#cvEnd") and page.is_hidden("#cvLen")
+    page.click("#cvPick"); page.wait_for_function("document.querySelector('#cvFileName').textContent === 'clip.mp4'")
+    page.click("#cvGo")
+    assert page.evaluate("window.__cvCall") == ["C:\\Videos\\clip.mp4", {"whole": True}]   # まるごと
+    page.check("#cvRangeOn")
+    assert page.is_visible("#cvStart")
+    page.click("#cvGo")
+    assert page.evaluate("window.__cvCall")[1] == {"start": "0", "length": "10"}               # 区間指定
+
+
+def test_file_convert_page(page):
+    page.click(".nav-item[data-view=conv]")
+    assert page.is_visible("#view-conv.is-active") and page.inner_text("h1:visible") == "ファイル変換"
+    assert page.is_disabled("#tcGo")
+    # 形式の選択肢
+    assert page.eval_on_selector_all("[data-setting=conv_format] option", "e=>e.map(x=>x.value)") == ["mp4", "mp3", "m4a", "opus", "flac", "wav"]
+    # 区間は既定オフ
+    assert not page.is_checked("#tcRangeOn") and page.is_hidden("#tcStart")
+    page.select_option("[data-setting=conv_format]", "mp3")
+    page.click("#tcPick"); page.wait_for_function("document.querySelector('#tcFileName').textContent === 'clip.mp4'")
+    assert not page.is_disabled("#tcGo")
+    page.click("#tcGo")
+    assert page.evaluate("window.__tcCall") == ["C:\\Videos\\clip.mp4", "mp3", None]
+    # 区間オン
+    page.check("#tcRangeOn")
+    assert page.is_visible("#tcStart")
+    commit(page, "#tcStart", "0:05"); commit(page, "#tcLen", "20")
+    page.click("#tcGo")
+    assert page.evaluate("window.__tcCall") == ["C:\\Videos\\clip.mp4", "mp3", {"start": "5", "length": "20"}]
+
+
+def test_convert_list_is_separate(page):
+    # 3つの一覧がそれぞれ別（ダウンロード/GIF変換/ファイル変換）
+    dl = page.eval_on_selector_all("#queue .job .title", "e=>e.map(x=>x.textContent)")
+    cv = page.eval_on_selector_all("#cvQueue .job .title", "e=>e.map(x=>x.textContent)")
+    page.click(".nav-item[data-view=conv]")
+    tc = page.eval_on_selector_all("#tcQueue .job .title", "e=>e.map(x=>x.textContent)")
+    assert tc == ["talk", "clip"] and cv == ["clip", "play"]
+    assert "talk" not in dl and "talk" not in cv
+    states = page.eval_on_selector_all("#tcQueue .job .state", "e=>e.map(x=>x.textContent)")
+    assert states == ["変換中", "完了"]

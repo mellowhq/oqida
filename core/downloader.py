@@ -117,6 +117,23 @@ def build_args(job, outdir, ytdlp, ffdir, deno, cookies_browser="none", speed_li
     return a
 
 
+AUDIO_CODECS = {"mp3": "libmp3lame", "m4a": "aac", "opus": "libopus", "flac": "flac", "wav": "pcm_s16le"}
+
+
+def build_convert_args(ffmpeg, src, dst, fmt, bitrate="320", trim=None):
+    """パソコン内の動画/音声ファイルを、別の形式に変換するffmpeg引数。trim=(開始秒,長さ秒)で区間切り出し。"""
+    cut = ["-ss", f"{trim[0]:g}", "-t", f"{trim[1]:g}"] if trim else []
+    base = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", *cut, "-i", src]
+    if fmt == "mp4":
+        return base + ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
+                       "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", dst]
+    a = base + ["-vn", "-c:a", AUDIO_CODECS[fmt], "-map_metadata", "0"]
+    if fmt in ("mp3", "m4a", "opus"):
+        br = min(int(bitrate), 256) if fmt == "opus" else int(bitrate)   # Opusは256kまで
+        a += ["-b:a", f"{br}k"]
+    return a + [dst]
+
+
 def _num(s):
     try:
         v = float(s)
@@ -186,6 +203,24 @@ class Engine:
         job = self._new_job(url=src, fmt="gif", quality="", bitrate="", kind="convert",
                             outdir=os.path.dirname(os.path.abspath(src)), gif=g, size_limit=int(size_limit or 0),
                             title=os.path.splitext(os.path.basename(src))[0])
+        with self._cv:
+            self._jobs.append(job)
+            self._cv.notify()
+        return job["id"]
+
+    def add_transcode(self, src, fmt, section=None, size_limit=0):
+        """パソコン内の動画/音声を、別の形式(mp4/mp3/m4a/opus/flac/wav)に変換する。元と同じフォルダに保存。"""
+        if not isinstance(src, str) or not os.path.isfile(src):
+            raise ValueError("bad_file")
+        if fmt not in AUDIO_CODECS and fmt != "mp4":
+            raise ValueError("bad_format")
+        if section is not None:
+            if not isinstance(section, dict):
+                raise ValueError("bad_range")
+            section = gifmod.validate_range(section.get("start"), section.get("length"))
+        job = self._new_job(url=src, fmt=fmt, quality="", bitrate=str(self.settings.get("mp3_bitrate")),
+                            kind="transcode", outdir=os.path.dirname(os.path.abspath(src)), section=section,
+                            size_limit=int(size_limit or 0), title=os.path.splitext(os.path.basename(src))[0])
         with self._cv:
             self._jobs.append(job)
             self._cv.notify()
@@ -384,6 +419,10 @@ class Engine:
             g = job["gif"]
             return self._finish_gif(job, ffdir, src=job["url"], trim=(g["start"], g["length"]),
                                     lo=0.0, span=99.0, fail_code="convert")
+        if job.get("kind") == "transcode":                     # パソコン内の動画/音声 → 別の形式
+            if not ffdir:
+                return self._fail(job, "tools_missing")
+            return self._convert_file(job, ffdir)
         ytdlp = self.tools["ytdlp"]()
         deno = self.tools["deno"]()
         if not ytdlp or not ffdir:
@@ -490,6 +529,41 @@ class Engine:
         except OSError:
             pass
 
+    def _convert_file(self, job, ffdir):
+        """パソコン内のファイルを別の形式に変換して、元と同じフォルダに保存する"""
+        src = job["url"]
+        fmt = job["fmt"]
+        stem = os.path.splitext(os.path.basename(src))[0]
+        trim = None
+        if job.get("section"):
+            sec = job["section"]
+            dur = gifmod.probe_duration(tools.ffprobe_exe(ffdir), src, tools.NO_WINDOW)
+            start, length = sec["start"], sec["length"]
+            if dur:
+                if start >= dur - 0.05:
+                    return self._fail(job, "bad_range", "start is past the end of the file")
+                if start + length > dur:
+                    length = round(dur - start, 3)
+            trim = (start, length)
+            stem += gifmod.range_suffix({"start": start, "length": length})
+        dst = gifmod.unique_path(job["outdir"], stem, "." + fmt)
+        dur_total = (trim[1] if trim else gifmod.probe_duration(tools.ffprobe_exe(ffdir), src, tools.NO_WINDOW)) or 1
+        with self._cv:
+            job.update(stage="convert", speed=0.0, eta=0)
+            job["percent"] = max(job["percent"], 2.0)
+        args = build_convert_args(tools.ffmpeg_exe(ffdir), src, dst, fmt, job["bitrate"], trim)
+        rc, tail = self._ffmpeg(job, args, dur_total, 2.0, 92.0)
+        if self._canceled(job):
+            self._remove(dst)
+            with self._cv:
+                job["status"] = "canceled"
+            return
+        if rc != 0 or not os.path.exists(dst) or os.path.getsize(dst) == 0:
+            self._remove(dst)
+            return self._fail(job, "convert", "\n".join(tail))
+        job["filepath"] = dst
+        self._finish_media(job, ffdir)          # サイズ上限があれば、ここで収める
+
     def _finish_media(self, job, ffdir):
         """MP4/MP3の仕上げ。サイズ上限があって超えていたら、収まるように作り直してから完了にする"""
         path = job["filepath"]
@@ -537,8 +611,9 @@ class Engine:
         while i < len(settings) or (not is_audio and i < 3):
             cur = settings[i]
             if is_audio:
+                bk = min(cur, 256) if fmt == "opus" else cur                 # Opusは256kまで
                 args = [ff, "-y", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-i", path,
-                        "-vn", "-c:a", codec, "-b:a", f"{cur}k", "-map_metadata", "0", tmp]
+                        "-vn", "-c:a", codec, "-b:a", f"{bk}k", "-map_metadata", "0", tmp]
             else:
                 v = cur["v_kbps"]
                 args = [ff, "-y", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-i", path,
