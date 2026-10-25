@@ -16,6 +16,7 @@ DEFAULTS = {
     "gif_width": "480",         # 320 / 480 / 640
     "gif_fps": "15",            # 10 / 15 / 20
     "conv_format": "mp4",       # ファイル変換の出力形式
+    "max_parallel": "1",        # 同時ダウンロード数 1〜4
     "speed_limit": "0",         # 0=無制限 / 0.5 / 1 / 2 / 5 / 10 (MB/秒)
     "save_thumb": False,        # サムネイル画像も保存する
     "history_keep": True,       # 履歴を残す
@@ -30,8 +31,9 @@ CHOICES = {
     "theme": {"dark", "light", "system"},
     "language": {"auto", "ja", "en"},
     "format": {"mp4", "mp3", "m4a", "opus", "flac", "wav", "gif"},
+    "max_parallel": {"1", "2", "3", "4"},
     "speed_limit": {"0", "0.5", "1", "2", "5", "10"},
-    "mp4_quality": {"best", "1080", "720", "480"},
+    "mp4_quality": {"best", "2160", "1440", "1080", "720", "480", "360", "240", "144"},
     "mp3_bitrate": {"320", "192", "128"},
     "gif_width": {"320", "480", "640"},
     "gif_fps": {"10", "15", "20"},

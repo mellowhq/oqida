@@ -7,7 +7,7 @@ import threading
 
 from core import downloader, paths, tools
 from core import gif as gifmod
-from core import sizefit
+from core import mediaserver, preview, sizefit
 from core.netutil import is_newer
 from core.settings import Settings
 from core.updater import AppUpdater, YtdlpUpdater
@@ -27,6 +27,7 @@ class Api:
         self._yt_upd = YtdlpUpdater(
             self._engine.busy, get_skip=lambda: self._settings.get("ytdlp_skip"),
             on_installed=lambda: self._settings.set("ytdlp_skip", ""))
+        self._media = mediaserver.MediaServer()
         self._window = None
         self._started = False
 
@@ -162,12 +163,43 @@ class Api:
         return self.inspect_video(res[0] if isinstance(res, (list, tuple)) else res)
 
     def inspect_video(self, path):
-        """選んだファイルの名前と長さを返す"""
+        """選んだファイルの名前・長さ・プレイヤー用URLを返す"""
         if not isinstance(path, str) or not os.path.isfile(path):
             return {"ok": False, "error": "bad_file"}
         ffdir = tools.ffmpeg_dir()
         dur = gifmod.probe_duration(tools.ffprobe_exe(ffdir), path, tools.NO_WINDOW) if ffdir else None
-        return {"ok": True, "path": path, "name": os.path.basename(path), "duration": dur}
+        media = self._media.set_file(path)        # 画面の<video>が再生できるURL
+        return {"ok": True, "path": path, "name": os.path.basename(path), "duration": dur, "media": media}
+
+    def preview_url(self, url):
+        """ダウンロード前に、URLの動画情報（タイトル・サムネ・長さ・選べる画質）を取得する"""
+        url = (url or "").strip()
+        if not downloader.URL_RE.match(url):
+            return {"ok": False, "error": "bad_url"}
+        ytdlp = tools.ytdlp_path()
+        if not ytdlp:
+            return {"ok": False, "error": "tools_missing"}
+        args = [ytdlp, "-J", "--no-warnings", "--no-playlist", "--flat-playlist"]
+        deno = tools.deno_path()
+        if deno:
+            args += ["--js-runtimes", f"deno:{deno}"]
+        cb = self._settings.get("cookies_browser")
+        if cb and cb != "none":
+            args += ["--cookies-from-browser", cb]
+        args.append(url)
+        try:
+            r = subprocess.run(args, capture_output=True, timeout=45, creationflags=NO_WINDOW)
+            if r.returncode != 0 or not r.stdout:
+                code = downloader.classify_error((r.stdout + r.stderr).decode("utf-8", "replace"))
+                return {"ok": False, "error": code if code != "unknown" else "preview_fail"}
+            info = json.loads(r.stdout.decode("utf-8", "replace"))
+            out = preview.parse_info(info)
+            out["quality_options"] = preview.quality_options(out.get("max_height"))
+            return out
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": "network"}
+        except Exception:
+            return {"ok": False, "error": "preview_fail"}
 
     def convert_gif(self, path, gif=None):
         s = self._settings
@@ -266,6 +298,7 @@ class Api:
 
     # ------------------------------------------------------------ 終了
     def _quit(self):
+        self._media.stop()
         self._engine.shutdown()
         if self._window is not None:
             try:

@@ -153,9 +153,10 @@ class Engine:
         self._cv = threading.Condition()
         self._procs = {}
         self._stop = False
-        self._busy = False
+        self._active = 0          # いま動いているジョブ数
         self._load_history()
-        threading.Thread(target=self._worker, daemon=True).start()
+        for _ in range(4):        # ワーカーを複数用意し、同時実行数は設定で絞る（既定は1＝順番に）
+            threading.Thread(target=self._worker, daemon=True).start()
 
     # ---------------------------------------------------------- 公開操作
     def _new_job(self, **kw):
@@ -326,7 +327,13 @@ class Engine:
 
     def busy(self):
         with self._cv:
-            return self._busy or any(j["status"] in ("queued", "running") for j in self._jobs)
+            return self._active > 0 or any(j["status"] in ("queued", "running") for j in self._jobs)
+
+    def _parallel_limit(self):
+        try:
+            return max(1, min(4, int(self.settings.get("max_parallel"))))
+        except (ValueError, TypeError):
+            return 1
 
     def _find(self, jid):
         return next((j for j in self._jobs if j["id"] == jid), None)
@@ -383,13 +390,18 @@ class Engine:
     def _worker(self):
         while True:
             with self._cv:
-                while not self._stop and not any(j["status"] == "queued" for j in self._jobs):
-                    self._cv.wait()
+                # 待機中のジョブがあり、かつ同時実行の上限に余裕があるまで待つ
+                while not self._stop and not (
+                    self._active < self._parallel_limit() and any(j["status"] == "queued" for j in self._jobs)
+                ):
+                    self._cv.wait(timeout=0.5)       # 上限が変わることもあるので、時々見直す
                 if self._stop:
                     return
-                job = next(j for j in self._jobs if j["status"] == "queued")
+                job = next((j for j in self._jobs if j["status"] == "queued"), None)
+                if job is None:
+                    continue
                 job["status"] = "running"
-                self._busy = True
+                self._active += 1
             try:
                 self._run(job)
             except Exception as e:  # noqa: BLE001
@@ -397,7 +409,8 @@ class Engine:
                 self._fail(job, "unknown", str(e))
             finally:
                 with self._cv:
-                    self._busy = False
+                    self._active -= 1
+                    self._cv.notify_all()
                 self._persist()
 
     def _fail(self, job, code, detail=""):

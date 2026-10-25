@@ -460,3 +460,29 @@ def test_convert_list_is_separate(page):
     assert "talk" not in dl and "talk" not in cv
     states = page.eval_on_selector_all("#tcQueue .job .state", "e=>e.map(x=>x.textContent)")
     assert states == ["変換中", "完了"]
+
+
+def test_preview_card_shows_video_info(page):
+    page.fill("#urlInput", "https://youtu.be/abc")
+    page.dispatch_event("#urlInput", "input")
+    page.wait_for_selector("#previewCard:not([hidden])")
+    assert "熊本城" in page.inner_text("#pvTitle")
+    assert "Mellow Walks" in page.inner_text("#pvMeta") and "12:32" in page.inner_text("#pvMeta")
+    # 画質ドロップダウンが実際の画質に変わる
+    assert page.eval_on_selector_all("[data-setting=mp4_quality] option", "e=>e.map(x=>x.value)") == ["best", "2160", "1440", "1080", "720", "480"]
+    page.click("#pvClose")
+    assert page.is_hidden("#previewCard")
+
+
+def test_preview_playlist(page):
+    page.fill("#urlInput", "https://youtu.be/x?list=abc")
+    page.dispatch_event("#urlInput", "input")
+    page.wait_for_selector("#previewCard:not([hidden])")
+    assert not page.is_hidden("#pvPlaylist") and "23" in page.inner_text("#pvPlaylist")
+
+
+def test_parallel_setting_present(page):
+    page.click(".nav-item[data-view=settings]")
+    assert page.eval_on_selector_all("[data-setting=max_parallel] option", "e=>e.map(x=>x.value)") == ["1", "2", "3", "4"]
+    page.select_option("[data-setting=max_parallel]", "3")
+    assert page.input_value("[data-setting=max_parallel]") == "3"

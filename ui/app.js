@@ -209,8 +209,10 @@ function makeRange(startId, endId, lenId, getDuration) {
   const v = { start: 0, len: 10 };
   let max = MAX_GIF;
   const dur = () => { const d = getDuration(); return d && d > 0 ? d : null; };
+  let onShow = null;
   const show = () => {
     el.s.value = fmtTime(v.start); el.e.value = fmtTime(v.start + v.len); el.l.value = fmtLen(v.len);
+    if (onShow) onShow();
   };
   // 動画の長さ・最長60秒・最短0.5秒に収まるよう、開始と長さを整える
   const fit = () => {
@@ -247,6 +249,66 @@ function makeRange(startId, endId, lenId, getDuration) {
     value: () => ({ start: String(Math.round(v.start * 1000) / 1000), length: String(Math.round(v.len * 1000) / 1000) }),
     reset: () => { v.start = 0; v.len = 10; fit(); show(); },
     setMax: (m) => { if (m === max) return; max = m; fit(); show(); },
+    get: () => ({ start: v.start, len: v.len }),
+    setStart: (sec) => { v.start = Math.max(0, sec); fit(); show(); },
+    setEnd: (sec) => { if (sec > v.start + MIN_LEN) { v.len = sec - v.start; fit(); show(); } },
+    onChange: (fn) => { onShow = fn; },
+  };
+}
+
+/* ---------------- 動画を見ながら区間を選ぶプレイヤー ---------------- */
+function bindPlayer(prefix, range, getFile) {
+  const video = $("#" + prefix + "Video");
+  const track = $("#" + prefix + "Track");
+  const sel = $("#" + prefix + "Sel"), cur = $("#" + prefix + "Cur");
+  const playBtn = $("#" + prefix + "Play");
+  let dur = 0;
+  const pct = (sec) => (dur ? Math.max(0, Math.min(100, (sec / dur) * 100)) : 0);
+  function paintRange() {
+    const r = range.get();
+    sel.style.left = pct(r.start) + "%";
+    sel.style.width = Math.max(0, pct(r.start + r.len) - pct(r.start)) + "%";
+  }
+  function paintCursor() {
+    cur.style.left = pct(video.currentTime) + "%";
+    $("#" + prefix + "Now").textContent = durText(video.currentTime);
+  }
+  video.addEventListener("loadedmetadata", () => {
+    dur = video.duration || 0;
+    $("#" + prefix + "Dur").textContent = durText(dur);
+    paintRange(); paintCursor();
+  });
+  video.addEventListener("timeupdate", paintCursor);
+  video.addEventListener("play", () => (playBtn.textContent = "❚❚"));
+  video.addEventListener("pause", () => (playBtn.textContent = "▶"));
+  playBtn.addEventListener("click", () => { if (video.paused) video.play(); else video.pause(); });
+  // トラックをクリック/ドラッグで頭出し
+  let scrubbing = false;
+  const seekAt = (e) => {
+    const rect = track.getBoundingClientRect();
+    const p = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    if (dur) video.currentTime = p * dur;
+  };
+  track.addEventListener("pointerdown", (e) => { scrubbing = true; track.setPointerCapture(e.pointerId); seekAt(e); });
+  track.addEventListener("pointermove", (e) => { if (scrubbing) seekAt(e); });
+  track.addEventListener("pointerup", () => { scrubbing = false; });
+  $("#" + prefix + "SetStart").addEventListener("click", () => { range.setStart(video.currentTime); paintRange(); });
+  $("#" + prefix + "SetEnd").addEventListener("click", () => { range.setEnd(video.currentTime); paintRange(); });
+  $("#" + prefix + "PlaySel").addEventListener("click", () => {
+    const r = range.get();
+    video.currentTime = r.start; video.play();
+    const stop = () => { if (video.currentTime >= r.start + r.len) { video.pause(); video.removeEventListener("timeupdate", stop); } };
+    video.addEventListener("timeupdate", stop);
+  });
+  return {
+    // ファイルを読み込む（なければプレイヤーを隠す）
+    load: (info) => {
+      const el = $("#" + prefix + "Player");
+      if (info && info.media) { video.src = info.media; el.hidden = false; }
+      else { video.removeAttribute("src"); video.load && video.load(); el.hidden = true; }
+    },
+    // 数字入力が変わったら選択範囲を塗り直す
+    refresh: paintRange,
   };
 }
 let cvFile = null;   // GIF変換で選んだファイル { path, name, duration }
@@ -255,6 +317,10 @@ const cvRange = makeRange("cvStart", "cvEnd", "cvLen", () => (cvFile && cvFile.d
 let tcFile = null;   // ファイル変換で選んだファイル
 const tcRange = makeRange("tcStart", "tcEnd", "tcLen", () => (tcFile && tcFile.duration) || null);
 tcRange.setMax(MAX_MEDIA);
+const cvPlayer = bindPlayer("cv", cvRange, () => cvFile);
+const tcPlayer = bindPlayer("tc", tcRange, () => tcFile);
+cvRange.onChange(() => cvPlayer.refresh());
+tcRange.onChange(() => tcPlayer.refresh());
 
 /* ---------------- ダウンロード操作 ---------------- */
 let pendingDup = null;   // 「もう一度ダウンロード」を選ばれたときのために覚えておく
@@ -264,7 +330,7 @@ async function startDownload(force = false) {
   if (!url) { toast(t("e_bad_url"), true); input.focus(); return; }
   const rng = S.settings.format === "gif" || $("#rangeOn").checked ? dlRange.value() : null;
   const r = await api.add_download(url, rng, force === true);
-  if (r.ok) { input.value = ""; await poll(); }
+  if (r.ok) { input.value = ""; clearPreview(); await poll(); }
   else if (r.error === "duplicate") {
     pendingDup = { url, rng };
     $("#dupMsg").textContent = t("dup_msg", { t: r.title || url });
@@ -284,9 +350,80 @@ $("#dupAgain").addEventListener("click", async () => {
 $("#urlInput").addEventListener("keydown", (e) => { if (e.key === "Enter") startDownload(); });
 $("#pasteBtn").addEventListener("click", async () => {
   const txt = await api.paste_clipboard();
-  if (txt) $("#urlInput").value = txt.split(/\s+/)[0];
+  if (txt) { $("#urlInput").value = txt.split(/\s+/)[0]; schedulePreview(); }
   $("#urlInput").focus();
 });
+
+/* ---------------- ダウンロード前のプレビュー ---------------- */
+const URL_RE = /^https?:\/\/\S+$/i;
+let pvTimer = null, pvSeq = 0, pvForUrl = "";
+function clearPreview() {
+  pvForUrl = "";
+  $("#previewCard").hidden = true;
+  $("#pvLoading").hidden = true;
+}
+function durText(sec) {
+  if (!sec && sec !== 0) return "";
+  const s = Math.round(sec), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(r).padStart(2, "0");
+}
+function schedulePreview() {
+  const url = $("#urlInput").value.trim();
+  clearTimeout(pvTimer);
+  if (!URL_RE.test(url)) { clearPreview(); return; }
+  if (url === pvForUrl) return;                    // 同じURLは取り直さない
+  pvTimer = setTimeout(() => loadPreview(url), 500);
+}
+async function loadPreview(url) {
+  const seq = ++pvSeq;
+  pvForUrl = url;
+  $("#previewCard").hidden = true;
+  $("#pvLoading").hidden = false;
+  let info;
+  try { info = await api.preview_url(url); } catch (e) { info = { ok: false }; }
+  if (seq !== pvSeq || $("#urlInput").value.trim() !== url) return;   // 入力が変わっていたら無視
+  $("#pvLoading").hidden = true;
+  if (!info || !info.ok) { clearPreview(); applyQualityOptions(null); return; }  // 失敗時は静かに閉じる（DLは試せる）
+  if (info.playlist) {
+    $("#pvThumb").parentElement.style.display = "none";
+    $("#pvTitle").textContent = info.title || url;
+    $("#pvMeta").textContent = "";
+    $("#pvPlaylist").hidden = false;
+    $("#pvPlaylist").textContent = t("pv_playlist", { n: info.count || "?" });
+    applyQualityOptions(null);
+  } else {
+    $("#pvThumb").parentElement.style.display = info.thumbnail ? "" : "none";
+    if (info.thumbnail) $("#pvThumb").src = info.thumbnail;
+    $("#pvTitle").textContent = info.title || url;
+    const bits = [];
+    if (info.uploader) bits.push(info.uploader);
+    if (info.duration) bits.push(durText(info.duration));
+    if (info.live) bits.push(t("pv_live"));
+    else if (info.max_height) bits.push(t("pv_max", { h: info.max_height }));
+    $("#pvMeta").textContent = bits.join("  ·  ");
+    $("#pvPlaylist").hidden = true;
+    applyQualityOptions(info.quality_options);
+  }
+  $("#previewCard").hidden = false;
+}
+// プレビューで分かった画質だけを、画質ドロップダウンに出す（最高画質は常に先頭）
+function applyQualityOptions(heights) {
+  const sel = $("[data-setting=mp4_quality]");
+  if (!sel) return;
+  const cur = S.settings.mp4_quality;
+  if (!heights || !heights.length) {
+    sel.innerHTML = '<option value="best">' + t("q_best") + "</option>" +
+      [1080, 720, 480].map((h) => `<option value="${h}">${h}p</option>`).join("");
+  } else {
+    sel.innerHTML = '<option value="best">' + t("q_best") + "</option>" +
+      heights.map((h) => `<option value="${h}">${h}p</option>`).join("");
+  }
+  // 以前選んでいた画質が一覧になければ「最高画質」に寄せる
+  sel.value = [...sel.options].some((o) => o.value === String(cur)) ? String(cur) : "best";
+  if (sel.value !== String(cur)) { S.settings.mp4_quality = sel.value; api.set_setting("mp4_quality", sel.value); }
+}
+$("#pvClose").addEventListener("click", () => { clearPreview(); });
+$("#urlInput").addEventListener("input", schedulePreview);
 $("#folderChange").addEventListener("click", async () => { await api.pick_folder(); await poll(); });
 $("#folderOpen").addEventListener("click", () => api.open_download_dir());
 $("#clearBtn").addEventListener("click", async () => { await api.clear_finished(); await poll(); });
@@ -388,6 +525,7 @@ function setCvFile(info) {
   if (!info || !info.ok) { if (info && info.error && info.error !== "canceled") toast(t("e_" + (info.error === "bad_file" ? "bad_file" : "drop_na")), true); return; }
   cvFile = info;
   cvRange.reset();
+  cvPlayer.load(info);
   $("#cvFileName").textContent = info.name;
   $("#cvFileName").title = info.path;
   $("#cvFileMeta").textContent = info.duration ? t("cv_len", { d: fmtDur(info.duration) }) : "";
@@ -409,6 +547,7 @@ function setTcFile(info) {
   if (!info || !info.ok) { if (info && info.error && info.error !== "canceled") toast(t("e_" + (info.error === "bad_file" ? "bad_file" : "drop_na")), true); return; }
   tcFile = info;
   tcRange.reset();
+  tcPlayer.load(info);
   $("#tcFileName").textContent = info.name;
   $("#tcFileName").title = info.path;
   $("#tcFileMeta").textContent = info.duration ? t("cv_len", { d: fmtDur(info.duration) }) : "";

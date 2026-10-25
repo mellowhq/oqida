@@ -48,6 +48,17 @@
         <button class="text-btn" id="pasteBtn" data-i18n="paste"></button>
       </div>
 
+      <div class="preview-card" id="previewCard" hidden>
+        <div class="pv-thumb"><img id="pvThumb" alt="" referrerpolicy="no-referrer"></div>
+        <div class="pv-info">
+          <div class="pv-title" id="pvTitle"></div>
+          <div class="pv-meta" id="pvMeta"></div>
+          <div class="pv-badge" id="pvPlaylist" hidden></div>
+        </div>
+        <button class="pv-close" id="pvClose" aria-label="close">&times;</button>
+      </div>
+      <div class="pv-loading" id="pvLoading" hidden><span class="spin"></span><span data-i18n="pv_loading"></span></div>
+
       <div class="toolbar">
         <label class="fld">
           <span data-i18n="label_format"></span>
@@ -160,6 +171,19 @@
         <button class="btn" id="cvPick" data-i18n="cv_pick"></button>
       </div>
 
+      <div class="player" id="cvPlayer" hidden>
+        <video id="cvVideo" preload="metadata" playsinline></video>
+        <div class="pl-track" id="cvTrack"><div class="pl-sel" id="cvSel"></div><div class="pl-cursor" id="cvCur"></div></div>
+        <div class="pl-controls">
+          <button class="pl-play" id="cvPlay" aria-label="play">▶</button>
+          <span class="pl-time num"><span id="cvNow">0:00</span> / <span id="cvDur">0:00</span></span>
+          <span class="pl-spacer"></span>
+          <button class="btn pl-set" id="cvSetStart" data-i18n="set_start"></button>
+          <button class="btn pl-set" id="cvSetEnd" data-i18n="set_end"></button>
+          <button class="btn pl-set" id="cvPlaySel" data-i18n="play_sel"></button>
+        </div>
+      </div>
+
       <div class="toolbar">
         <div class="fld">
           <span data-i18n="label_range"></span>
@@ -226,6 +250,19 @@
         <div class="drop-text" id="tcFileName" data-i18n="cv_drop"></div>
         <div class="drop-sub dim small" id="tcFileMeta"></div>
         <button class="btn" id="tcPick" data-i18n="cv_pick"></button>
+      </div>
+
+      <div class="player" id="tcPlayer" hidden>
+        <video id="tcVideo" preload="metadata" playsinline></video>
+        <div class="pl-track" id="tcTrack"><div class="pl-sel" id="tcSel"></div><div class="pl-cursor" id="tcCur"></div></div>
+        <div class="pl-controls">
+          <button class="pl-play" id="tcPlay" aria-label="play">▶</button>
+          <span class="pl-time num"><span id="tcNow">0:00</span> / <span id="tcDur">0:00</span></span>
+          <span class="pl-spacer"></span>
+          <button class="btn pl-set" id="tcSetStart" data-i18n="set_start"></button>
+          <button class="btn pl-set" id="tcSetEnd" data-i18n="set_end"></button>
+          <button class="btn pl-set" id="tcPlaySel" data-i18n="play_sel"></button>
+        </div>
       </div>
 
       <div class="toolbar">
@@ -353,6 +390,18 @@
 
       <h2 class="grp" data-i18n="s_download"></h2>
       <div class="panel">
+        <div class="row">
+          <div class="row-text">
+            <div class="row-title" data-i18n="s_parallel"></div>
+            <div class="row-sub" data-i18n="s_parallel_sub"></div>
+          </div>
+          <select data-setting="max_parallel">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+          </select>
+        </div>
         <div class="row">
           <div class="row-text">
             <div class="row-title" data-i18n="s_speed"></div>

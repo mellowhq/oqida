@@ -6,7 +6,7 @@
     theme: qs.get("theme") || "dark", accent: qs.get("accent") ? "#" + qs.get("accent") : "#ff8a3d",
     language: qs.get("lang") || "ja", format: qs.get("fmt") || "mp4",
     mp4_quality: "1080", mp3_bitrate: "320", gif_width: "480", gif_fps: "15", conv_format: "mp4", size_limit_mb: qs.get("limit") || "0",
-    speed_limit: "0", save_thumb: false, history_keep: true, ytdlp_skip: qs.get("back") ? "2026.10.30" : "",
+    max_parallel: "1", speed_limit: "0", save_thumb: false, history_keep: true, ytdlp_skip: qs.get("back") ? "2026.10.30" : "",
     cookies_browser: "none", auto_check_app: true, auto_update_ytdlp: true,
     download_dir: "", download_dir_effective: "C:\\Users\\mel\\Downloads\\OQIDA",
     language_effective: (qs.get("lang") || "ja") === "auto" ? "ja" : (qs.get("lang") || "ja"),
@@ -48,9 +48,16 @@
       return { ok: true };
     },
     paste_clipboard: async () => "https://x.com/example/status/1234567890",
-    pick_video: async () => ({ ok: true, path: "C:\\Videos\\clip.mp4", name: "clip.mp4", duration: 83 }),
+    pick_video: async () => ({ ok: true, path: "C:\\Videos\\clip.mp4", name: "clip.mp4", duration: 83, media: (new URLSearchParams(location.search)).get("media") || "" }),
     convert_gif: async (p, g) => { window.__cvCall = [p, g]; return { ok: true }; },
     convert_file: async (p, f, r) => { window.__tcCall = [p, f, r]; return { ok: true }; },
+    preview_url: async (u) => {
+      if (/playlist|list=/.test(u)) return { ok: true, playlist: true, count: 23, title: "作業用BGMまとめ" };
+      return { ok: true, playlist: false, title: "【4K】夜の熊本城を歩く Night Walk Kumamoto Castle",
+        uploader: "Mellow Walks", duration: 752, thumbnail: T("#33414d", "#4f6a7d"),
+        heights: [2160, 1440, 1080, 720, 480], max_height: 2160, has_video: true, live: false,
+        quality_options: [2160, 1440, 1080, 720, 480] };
+    },
     pick_folder: ok, open_download_dir: ok, open_data_dir: ok, reveal: ok,
     cancel: async (id) => { const j = find(id); if (j) j.status = "canceled"; return { ok: true }; },
     remove: async (id) => { jobs = jobs.filter((j) => j.id !== id); return { ok: true }; },

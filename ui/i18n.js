@@ -82,6 +82,11 @@ const I18N = {
     e_len_max_media: "区間は最長6時間までです。", e_copy_fail: "コピーできませんでした。", e_ytdlp_back_fail: "戻せませんでした。",
     tab_conv: "ファイル変換", tc_go: "変換", tc_list: "変換一覧",
     tc_hint: "選んだ動画/音声を、別の形式に変換します。変換後のファイルは元と同じフォルダに保存されます。",
+    pv_loading: "情報を取得中…", pv_ch: "{u}", pv_max: "最大 {h}p", pv_live: "ライブ配信",
+    pv_playlist: "プレイリスト（{n}本）。先頭の1本だけダウンロードします",
+    s_parallel: "同時ダウンロード数", s_parallel_sub: "一度に何本まで同時に処理するか。",
+    e_preview_fail: "情報を取得できませんでした。",
+    set_start: "ここを開始", set_end: "ここを終了", play_sel: "区間を再生",
   },
   en: {
     tab_main: "Download", tab_settings: "Settings",
@@ -166,6 +171,11 @@ const I18N = {
     e_len_max_media: "A range can be 6 hours at most.", e_copy_fail: "Could not copy.", e_ytdlp_back_fail: "Could not go back.",
     tab_conv: "Convert", tc_go: "Convert", tc_list: "Conversions",
     tc_hint: "Converts the selected video or audio to another format. The result is saved in the same folder as the original.",
+    pv_loading: "Loading info…", pv_ch: "{u}", pv_max: "up to {h}p", pv_live: "Live",
+    pv_playlist: "Playlist ({n} videos). Only the first one is downloaded.",
+    s_parallel: "Simultaneous downloads", s_parallel_sub: "How many to process at the same time.",
+    e_preview_fail: "Could not load the info.",
+    set_start: "Set start", set_end: "Set end", play_sel: "Play range",
   },
 };
 
