@@ -56,24 +56,30 @@ def classify_error(text: str) -> str:
     return "unknown"
 
 
-def build_args(job, outdir, ytdlp, ffdir, deno, cookies_browser="none", speed_limit="0"):
+def build_args(job, outdir, ytdlp, ffdir, deno, cookies_browser="none", speed_limit="0", donefile=None):
     """yt-dlpに渡す引数を組み立てる（実行はしない。テストしやすいように分けてある）。"""
     section = job.get("section")
     suffix = gifmod.range_suffix(section) if section else ""          # 区間を指定したときは、ファイル名に印を付ける
     a = [
         ytdlp,
         "--no-playlist", "--newline", "--progress", "--color", "never",
-        "--windows-filenames", "--no-mtime",
+        "--windows-filenames", "--no-mtime", "--encoding", "utf-8",   # 文字化け防止（日本語のタイトル・フォルダ名）
         "-o", os.path.join(outdir, "%(title).150B" + suffix + ".%(ext)s"),
         "--print", f"{P_TITLE}%(title)s",
         "--print", f"{P_SITE}%(webpage_url_domain)s",
         "--print", f"{P_THUMB}%(thumbnail)s",
-        "--print", f"after_move:{P_DONE}%(filepath)s",
         "--progress-template",
         "download:" + P_PROG + "%(progress.status)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|"
         "%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(progress.filename)s",
         "--progress-template", "postprocess:" + P_PP + "%(progress.postprocessor)s|%(progress.status)s",
     ]
+    # 完成したファイルのパスは、標準出力だと日本語フォルダ名で文字化けすることがあるので、
+    # yt-dlp に UTF-8 のファイルへ直接書かせて、それを読む（文字化けの影響を受けない）。
+    # 念のため標準出力にも出しておき、ファイルが読めなかった場合のフォールバックにする。
+    # （--encoding utf-8 を付けているので標準出力側も文字化けしない）
+    if donefile:
+        a += ["--print-to-file", "after_move:%(filepath)s", donefile]
+    a += ["--print", f"after_move:{P_DONE}%(filepath)s"]
     if ffdir:
         a += ["--ffmpeg-location", ffdir]
     if deno:
@@ -460,8 +466,13 @@ class Engine:
                 shutil.rmtree(workdir, ignore_errors=True)
 
     def _run_ytdlp(self, job, ytdlp, ffdir, deno, outdir):
+        donefile = str(paths.tmp_dir() / f"done{job['id']}.txt")      # 完成パスの受け取り用（UTF-8）
+        try:
+            os.remove(donefile)
+        except OSError:
+            pass
         args = build_args(job, outdir, ytdlp, ffdir, deno, self.settings.get("cookies_browser"),
-                          self.settings.get("speed_limit"))
+                          self.settings.get("speed_limit"), donefile=donefile)
         shown, skip = [], False
         for x in args:                                          # アプリ内部用の長い指定は、ログを読みにくくするだけなので省く
             if skip:
@@ -495,6 +506,23 @@ class Engine:
             with self._cv:
                 job["status"] = "canceled"
             return
+        # 完成ファイルのパスを、yt-dlpが書いたUTF-8ファイルから読む（標準出力の文字化けを避ける）
+        final = ""
+        try:
+            with open(donefile, encoding="utf-8") as f:
+                lines = [ln.strip() for ln in f if ln.strip()]
+            if lines:
+                final = lines[-1]
+        except OSError:
+            pass
+        finally:
+            try:
+                os.remove(donefile)
+            except OSError:
+                pass
+        if final:
+            with self._cv:
+                job["filepath"] = final
         if rc == 0 and job["filepath"]:
             with self._cv:
                 job["_pause"] = False

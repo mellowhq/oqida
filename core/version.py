@@ -1,4 +1,4 @@
-__version__ = "0.7.1"
+__version__ = "0.7.2"
 APP_NAME = "OQIDA"
 # アップデート確認先（GitHubの「ユーザー名/リポジトリ名」）。公開リポジトリのReleasesを見に行く。
 UPDATE_REPO = "mellowhq/oqida"
