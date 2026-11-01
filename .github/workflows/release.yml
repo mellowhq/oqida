@@ -92,3 +92,75 @@ jobs:
           target_commitish: ${{ steps.bump.outputs.sha || github.sha }}
           files: dist/OQIDA-*-Setup.exe
           generate_release_notes: true
+
+  # macOS版（.dmg）。Windowsジョブがバージョンを記録・リリース作成したあとに続けて実行し、
+  # 同じリリースに .dmg を追加する。こちらはコミットしない（バージョンの二重記録を避ける）。
+  build-macos:
+    needs: build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: バージョンを決める
+        id: ver
+        shell: bash
+        run: |
+          IN="${{ github.event.inputs.version }}"
+          if [ -n "$IN" ]; then V="$IN"
+          elif [[ "${GITHUB_REF:-}" == refs/tags/v* ]]; then V="${GITHUB_REF#refs/tags/v}"
+          else V="0.0.0"; fi
+          V="${V#v}"
+          if [[ ! "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "バージョンは 0.5.2 のような形式で入れてください（入力: '$V'）"; exit 1; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          python tools/set_version.py "$V"     # このジョブ内だけ反映（コミットはしない）
+
+      - name: 依存を入れる
+        run: |
+          python -m pip install -r requirements.txt pyinstaller
+          python -m pip install pyobjc-framework-WebKit   # macOSの画面表示(WKWebView)に必要
+
+      - name: 読み込みの簡易チェック
+        run: python -c "import core.downloader, core.updater, core.tools, core.settings; print('import ok')"
+
+      - name: アイコン(.icns)を作る
+        run: |
+          mkdir -p icon.iconset
+          for s in 16 32 128 256 512; do
+            sips -z $s $s assets/oqida.png --out "icon.iconset/icon_${s}x${s}.png" >/dev/null
+            sips -z $((s*2)) $((s*2)) assets/oqida.png --out "icon.iconset/icon_${s}x${s}@2x.png" >/dev/null
+          done
+          iconutil -c icns icon.iconset -o oqida.icns
+
+      - name: .appを作る
+        run: >
+          pyinstaller --noconfirm --clean --windowed --name OQIDA
+          --icon oqida.icns --osx-bundle-identifier com.mellowhq.oqida
+          --add-data "ui:ui" --add-data "assets:assets" main.py
+
+      - name: 署名（ad-hoc）とdmg化
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          # ad-hoc署名（証明書なしでも、特にApple Siliconで起動できるようにする）
+          codesign --force --deep --sign - dist/OQIDA.app
+          # インストーラ代わりの.dmg（アプリと「アプリケーション」フォルダへのショートカットを入れる）
+          mkdir -p dmgroot
+          cp -R dist/OQIDA.app dmgroot/
+          ln -s /Applications dmgroot/Applications
+          hdiutil create -volname "OQIDA" -srcfolder dmgroot -ov -format UDZO "dist/OQIDA-$V-mac.dmg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OQIDA-mac
+          path: dist/OQIDA-*-mac.dmg
+
+      - name: Releasesに追加する
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: OQIDA v${{ steps.ver.outputs.version }}
+          files: dist/OQIDA-*-mac.dmg

@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 IS_WINDOWS = sys.platform == "win32"
+IS_MAC = sys.platform == "darwin"
 
 
 def data_dir() -> Path:
@@ -12,6 +13,8 @@ def data_dir() -> Path:
         base = Path(override)
     elif IS_WINDOWS:
         base = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "OQIDA"
+    elif IS_MAC:
+        base = Path.home() / "Library" / "Application Support" / "OQIDA"
     else:
         base = Path.home() / ".oqida"
     base.mkdir(parents=True, exist_ok=True)

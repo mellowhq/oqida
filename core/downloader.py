@@ -64,7 +64,11 @@ def build_args(job, outdir, ytdlp, ffdir, deno, cookies_browser="none", speed_li
     a = [
         ytdlp,
         "--no-playlist", "--newline", "--progress", "--color", "never",
-        "--windows-filenames", "--no-mtime", "--encoding", "utf-8",   # 文字化け防止（日本語のタイトル・フォルダ名）
+        "--no-mtime", "--encoding", "utf-8",              # 文字化け防止（日本語のタイトル・フォルダ名）
+    ]
+    if paths.IS_WINDOWS:                                  # Windowsで使えない文字をファイル名から除く（Macでは不要）
+        a += ["--windows-filenames"]
+    a += [
         "-o", os.path.join(outdir, "%(title).150B" + suffix + ".%(ext)s"),
         "--print", f"{P_TITLE}%(title)s",
         "--print", f"{P_SITE}%(webpage_url_domain)s",
@@ -491,6 +495,8 @@ class Engine:
                 pass
 
     def _subtitle_wanted(self):
+        if paths.IS_MAC:                       # 字幕機能はいまWindowsのみ
+            return False
         try:
             return bool(self.settings.get("auto_subtitle"))
         except Exception:

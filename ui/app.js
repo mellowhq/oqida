@@ -190,6 +190,12 @@ function renderSettings() {
   const tcRangeOn = $("#tcRangeOn").checked;
   $$(".tc-range").forEach((el) => (el.hidden = !tcRangeOn));
   $("#sbBurnNote").hidden = !st.sub_burn;                                // 焼き込みオンのときだけ注意書きを出す
+  // 字幕機能はいまWindowsのみ。Mac等では左メニュー・設定・ダウンロードのトグルを隠す
+  const subOn = S.subtitle !== false;
+  const navSub = $(".nav-item[data-view=sub]"); if (navSub) navSub.hidden = !subOn;
+  $("#subtitleGroup").hidden = !subOn;
+  $("#subtitlePanel").hidden = !subOn;
+  if (!subOn) $("#ctlAutoSub").hidden = true;
   $("#folderPath").textContent = st.download_dir_effective;
   $("#folderPath").title = st.download_dir_effective;
   renderSwatches();

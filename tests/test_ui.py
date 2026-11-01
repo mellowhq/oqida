@@ -467,6 +467,18 @@ def test_subtitle_page(page):
     assert "interview" not in dl
 
 
+def test_subtitle_hidden_on_mac(browser_only):
+    ctx = browser_only.new_context(viewport={"width": 1000, "height": 720})
+    pg = ctx.new_page()
+    pg.goto(UI + "?mock=1&lang=ja&mac=1")
+    pg.wait_for_timeout(400)
+    # Mac では字幕の左メニュー・設定グループが隠れる
+    assert pg.is_hidden(".nav-item[data-view=sub]")
+    assert pg.is_hidden("#subtitleGroup") and pg.is_hidden("#subtitlePanel")
+    assert pg.is_hidden("#ctlAutoSub")
+    ctx.close()
+
+
 def test_convert_list_is_separate(page):
     # 3つの一覧がそれぞれ別（ダウンロード/GIF変換/ファイル変換）
     dl = page.eval_on_selector_all("#queue .job .title", "e=>e.map(x=>x.textContent)")

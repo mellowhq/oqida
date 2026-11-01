@@ -38,7 +38,9 @@
     ? { state: "skipped", current: "2026.10.01", latest: "2026.10.30", previous: "2026.10.30" }
     : { state: "uptodate", current: "2026.10.30", latest: "2026.10.30", previous: qs.get("noprev") ? null : "2026.10.01" };
   const state = () => ({
-    version: "0.5.0", settings, jobs, setup,
+    version: "0.5.0", jobs, setup,
+    platform: qs.get("mac") ? "mac" : "win", subtitle: !qs.get("mac"),
+    settings,
     app_update: { state: upd, current: "0.5.0", latest: "0.6.0", notes: "- yt-dlpの更新処理を改善\n- 設定画面を追加", done: 40e6, total: 100e6, error: "" },
     ytdlp: { state: yt.state, current: yt.current, latest: yt.latest, error: "", previous: yt.previous, skip: settings.ytdlp_skip },
   });

@@ -16,8 +16,27 @@ from .netutil import download_file, http_json, is_newer
 
 YTDLP_REPO = "yt-dlp/yt-dlp"
 YTDLP_URL = f"https://github.com/{YTDLP_REPO}/releases/latest/download/yt-dlp.exe"
+# macOS版の yt-dlp はユニバーサルバイナリ（Apple Silicon・Intel 両対応の1本）
+YTDLP_MAC_URL = f"https://github.com/{YTDLP_REPO}/releases/latest/download/yt-dlp_macos"
 FFMPEG_URL = "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
 DENO_URL = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip"
+
+# macOSの ffmpeg / ffprobe は、GitHubで配布している静的バイナリ(descriptinc)から取得する。
+# 資産名は ffmpeg-darwin-arm64 / ffmpeg-darwin-x64 のように {名前}-darwin-{アーキ}。
+FFMPEG_MAC_REPO = "descriptinc/ffmpeg-ffprobe-static"
+FFMPEG_MAC_FALLBACK_TAG = "b6.1.2-rc.1"      # APIが使えないとき用の控え（上記資産が揃っている既知のタグ）
+
+
+def _mac_arch():
+    """descriptinc の資産名に使うアーキ名（arm64 / x64）。"""
+    import platform
+    return "arm64" if platform.machine() == "arm64" else "x64"
+
+
+def _deno_arch():
+    """deno の資産名に使うアーキ名（aarch64 / x86_64）。"""
+    import platform
+    return "aarch64" if platform.machine() == "arm64" else "x86_64"
 
 # 字幕の文字起こしに使う whisper.cpp（本体に同梱せず、字幕を初めて使うときに bin/whisper へ取得する）
 WHISPER_REPO = "ggml-org/whisper.cpp"
@@ -241,12 +260,14 @@ def rollback_ytdlp():
 
 
 def _fetch_ytdlp(progress, cancel):
-    """最新のyt-dlpを取得。GitHubがsha256を教えてくれる場合は照合する。"""
-    url, want_sha = YTDLP_URL, None
+    """最新のyt-dlpを取得。GitHubがsha256を教えてくれる場合は照合する（Windowsのみ照合）。"""
+    asset = "yt-dlp_macos" if paths.IS_MAC else "yt-dlp.exe"
+    url = YTDLP_MAC_URL if paths.IS_MAC else YTDLP_URL
+    want_sha = None
     try:
         rel = http_json(f"https://api.github.com/repos/{YTDLP_REPO}/releases/latest")
         for a in rel.get("assets", []):
-            if a.get("name") == "yt-dlp.exe":
+            if a.get("name") == asset:
                 url = a["browser_download_url"]
                 d = a.get("digest") or ""
                 if d.startswith("sha256:"):
@@ -259,6 +280,36 @@ def _fetch_ytdlp(progress, cancel):
         tmp.unlink(missing_ok=True)
         raise RuntimeError("yt-dlp checksum mismatch")
     _install_ytdlp(tmp)
+
+
+def _download_bin(url, name, progress, cancel):
+    """1本のバイナリをダウンロードして bin/ に置き、実行できるようにする（macOSの ffmpeg 等）。"""
+    tmp = paths.bin_dir() / (name + ".new")
+    download_file(url, tmp, progress, cancel)
+    if not paths.IS_WINDOWS:
+        os.chmod(tmp, 0o755)
+    _replace(tmp, paths.bin_dir() / name)
+
+
+def _fetch_ffmpeg_mac(progress, cancel):
+    """macOS用の ffmpeg と ffprobe を descriptinc から取得して bin/ に置く。"""
+    arch = _mac_arch()
+    names = {"ffmpeg": f"ffmpeg-darwin-{arch}", "ffprobe": f"ffprobe-darwin-{arch}"}
+    base = f"https://github.com/{FFMPEG_MAC_REPO}/releases/download/{FFMPEG_MAC_FALLBACK_TAG}"
+    urls = {local: f"{base}/{asset}" for local, asset in names.items()}
+    try:                                                     # バイナリが揃っている最新リリースをAPIから探す
+        rels = http_json(f"https://api.github.com/repos/{FFMPEG_MAC_REPO}/releases?per_page=20")
+        for rel in rels:
+            have = {a.get("name"): a.get("browser_download_url") for a in rel.get("assets", [])}
+            if all(names[l] in have for l in names):
+                urls = {l: have[names[l]] for l in names}
+                break
+    except Exception:
+        pass
+    # 2本まとめて進捗を出す（0〜50% / 50〜100%）
+    _download_bin(urls["ffmpeg"], "ffmpeg", lambda d, t: progress and progress(d, t * 2 if t else 0), cancel)
+    _download_bin(urls["ffprobe"], "ffprobe",
+                  lambda d, t: progress and progress((t or 0) + d, t * 2 if t else 0), cancel)
 
 
 def _fetch_zip_members(url, wanted, progress, cancel):
@@ -274,6 +325,8 @@ def _fetch_zip_members(url, wanted, progress, cancel):
                     dst = paths.bin_dir() / (base + ".new")
                     with z.open(m) as src, open(dst, "wb") as out:
                         shutil.copyfileobj(src, out)
+                    if not paths.IS_WINDOWS:               # macOS等では実行権限を付ける
+                        os.chmod(dst, 0o755)
                     _replace(dst, paths.bin_dir() / base)
                     found.add(base)
     finally:
@@ -337,14 +390,21 @@ def fetch_model(name, progress=None, cancel=None):
 
 
 def fetch(component, progress=None, cancel=None):
-    if not paths.IS_WINDOWS and not os.environ.get("OQIDA_ALLOW_FETCH"):
-        raise RuntimeError("tool download is Windows-only")
+    if not (paths.IS_WINDOWS or paths.IS_MAC) and not os.environ.get("OQIDA_ALLOW_FETCH"):
+        raise RuntimeError("tool download is supported on Windows and macOS")
     if component == "ytdlp":
         _fetch_ytdlp(progress, cancel)
     elif component == "ffmpeg":
-        _fetch_zip_members(FFMPEG_URL, {"ffmpeg.exe", "ffprobe.exe"}, progress, cancel)
+        if paths.IS_MAC:
+            _fetch_ffmpeg_mac(progress, cancel)
+        else:
+            _fetch_zip_members(FFMPEG_URL, {"ffmpeg.exe", "ffprobe.exe"}, progress, cancel)
     elif component == "deno":
-        _fetch_zip_members(DENO_URL, {"deno.exe"}, progress, cancel)
+        if paths.IS_MAC:
+            _fetch_zip_members(f"https://github.com/denoland/deno/releases/latest/download/"
+                               f"deno-{_deno_arch()}-apple-darwin.zip", {"deno"}, progress, cancel)
+        else:
+            _fetch_zip_members(DENO_URL, {"deno.exe"}, progress, cancel)
     elif component == "whisper":
         _fetch_whisper(progress, cancel)
     else:

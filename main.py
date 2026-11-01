@@ -35,6 +35,8 @@ class Api:
     def get_state(self):
         return {
             "version": __version__,
+            "platform": "mac" if paths.IS_MAC else ("win" if paths.IS_WINDOWS else "other"),
+            "subtitle": not paths.IS_MAC,      # 字幕機能はいまWindowsのみ（Mac版では非表示）
             "settings": self._settings.all(),
             "jobs": self._engine.snapshot(),
             "setup": self._boot.snapshot(),
@@ -243,6 +245,8 @@ class Api:
 
     def make_subtitle(self, path):
         """パソコン内の動画/音声から字幕(.srt)を作る。設定（翻訳先の言語・モデルなど）に従う。"""
+        if paths.IS_MAC:                       # 字幕機能はいまWindowsのみ
+            return {"ok": False, "error": "unsupported"}
         try:
             jid = self._engine.add_subtitle(path)
             return {"ok": True, "id": jid}
