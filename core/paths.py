@@ -30,6 +30,13 @@ def tmp_dir() -> Path:
     return p
 
 
+def models_dir() -> Path:
+    """字幕用の音声認識モデル（Whisper）の置き場所。サイズが大きいので本体とは分けて保存する。"""
+    p = data_dir() / "models"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
 def settings_file() -> Path:
     return data_dir() / "settings.json"
 

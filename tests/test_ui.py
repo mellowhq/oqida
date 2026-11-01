@@ -450,6 +450,23 @@ def test_file_convert_page(page):
     assert page.evaluate("window.__tcCall") == ["C:\\Videos\\clip.mp4", "mp3", {"start": "5", "length": "20"}]
 
 
+def test_subtitle_page(page):
+    page.click(".nav-item[data-view=sub]")
+    assert page.is_visible("#view-sub.is-active") and page.inner_text("h1:visible") == "字幕"
+    assert page.is_disabled("#sbGo")
+    # 翻訳先の言語を選べる
+    assert "ja" in page.eval_on_selector_all("[data-setting=sub_target_lang] option", "e=>e.map(x=>x.value)")
+    page.click("#sbPick"); page.wait_for_function("document.querySelector('#sbFileName').textContent === 'clip.mp4'")
+    assert not page.is_disabled("#sbGo")
+    page.click("#sbGo")
+    assert page.evaluate("window.__sbCall") == ["C:\\Videos\\clip.mp4"]
+    # 字幕一覧はダウンロードとは別で、段階ラベルが出る
+    states = page.eval_on_selector_all("#sbQueue .job .state", "e=>e.map(x=>x.textContent)")
+    assert states == ["文字起こし中", "完了"]
+    dl = page.eval_on_selector_all("#queue .job .title", "e=>e.map(x=>x.textContent)")
+    assert "interview" not in dl
+
+
 def test_convert_list_is_separate(page):
     # 3つの一覧がそれぞれ別（ダウンロード/GIF変換/ファイル変換）
     dl = page.eval_on_selector_all("#queue .job .title", "e=>e.map(x=>x.textContent)")

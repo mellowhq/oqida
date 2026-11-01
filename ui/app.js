@@ -172,6 +172,7 @@ function renderSettings() {
   ["ctlGifStart", "ctlGifEnd", "ctlGifLen"].forEach((id) => ($("#" + id).hidden = !showRange));
   ["ctlGifWidth", "ctlGifFps", "gifNote"].forEach((id) => ($("#" + id).hidden = !isGif));
   $("#ctlThumb").hidden = isGif;
+  $("#ctlAutoSub").hidden = isGif;                                       // 字幕はGIFには付けない
   dlRange.setMax(isGif ? MAX_GIF : MAX_MEDIA);
   const limited = String(st.size_limit_mb) !== "0";
   $("#sizeNote").hidden = !limited;
@@ -456,7 +457,7 @@ function setActions(el, job) {
   const id = job.id;
   const after = async (p) => { await p; await poll(); };
   // 一時停止できるのは、ダウンロード中のもの（変換や仕上げの最中は不可）
-  if (job.status === "running" && job.kind !== "convert" && job.stage !== "convert" && job.percent < 95) add(t("act_pause"), () => after(api.pause(id)));
+  if (job.status === "running" && job.kind === "download" && job.stage !== "convert" && job.percent < 95) add(t("act_pause"), () => after(api.pause(id)));
   if (job.status === "paused") add(t("act_resume"), () => after(api.resume(id)));
   if (["queued", "running", "paused"].includes(job.status)) add(t("act_cancel"), () => after(api.cancel(id)));
   if (job.status === "error") add(t("act_detail"), () => openLog(id));
@@ -475,7 +476,12 @@ function updateRow(el, job) {
   $(".title", el).textContent = job.title || job.url;
   $(".title", el).title = job.title || job.url;
   $(".site", el).textContent = job.site || "";
-  let state = t("st_" + (converting ? "converting" : job.status));
+  let state;
+  if (job.kind === "subtitle" && job.status === "running") {
+    state = job.stage ? t("st_sub_" + job.stage) : t("st_running");
+  } else {
+    state = t("st_" + (converting ? "converting" : job.status));
+  }
   if (job.status === "error") state = t("e_" + (job.error || "unknown"));
   $(".state", el).textContent = state;
   const live = job.status === "running" && !converting;
@@ -499,13 +505,15 @@ function syncList(container, jobs, seen) {
 }
 const isDone = (j) => !["queued", "running"].includes(j.status);
 function renderJobs() {
-  const dl = S.jobs.filter((j) => j.kind !== "convert" && j.kind !== "transcode");
+  const dl = S.jobs.filter((j) => j.kind !== "convert" && j.kind !== "transcode" && j.kind !== "subtitle");
   const cv = S.jobs.filter((j) => j.kind === "convert");       // GIF変換
   const tc = S.jobs.filter((j) => j.kind === "transcode");     // ファイル変換
+  const sb = S.jobs.filter((j) => j.kind === "subtitle");      // 字幕
   const seen = new Set();
   syncList($("#queue"), dl, seen);
   syncList($("#cvQueue"), cv, seen);
   syncList($("#tcQueue"), tc, seen);
+  syncList($("#sbQueue"), sb, seen);
   for (const [id, el] of rows) if (!seen.has(id)) { el.remove(); rows.delete(id); }
   $("#clearBtn").hidden = !dl.some(isDone);
   $("#emptyBox").hidden = dl.length > 0;
@@ -517,6 +525,9 @@ function renderJobs() {
   $("#tcClear").hidden = !tc.some(isDone);
   $("#tcHead").hidden = tc.length === 0;
   $("#tcLabel").textContent = t("tc_list") + (tc.length ? " (" + tc.length + ")" : "");
+  $("#sbClear").hidden = !sb.some(isDone);
+  $("#sbHead").hidden = sb.length === 0;
+  $("#sbLabel").textContent = t("sub_list") + (sb.length ? " (" + sb.length + ")" : "");
 }
 
 /* ---------------- GIF変換（パソコン内の動画） ---------------- */
@@ -566,6 +577,30 @@ $("#tcGo").addEventListener("click", async () => {
   if (r.ok) await poll(); else toast(t("e_" + (r.error || "convert")), true);
 });
 $("#tcClear").addEventListener("click", async () => { await api.clear_finished(); await poll(); });
+
+/* ---------------- 字幕（パソコン内の動画/音声 → .srt） ---------------- */
+let sbFile = null;
+function setSbFile(info) {
+  if (!info || !info.ok) { if (info && info.error && info.error !== "canceled") toast(t("e_" + (info.error === "bad_file" ? "bad_file" : "drop_na")), true); return; }
+  sbFile = info;
+  $("#sbFileName").textContent = info.name;
+  $("#sbFileName").title = info.path;
+  $("#sbFileMeta").textContent = info.duration ? t("cv_len", { d: fmtDur(info.duration) }) : "";
+  $("#sbDrop").classList.add("has-file");
+  $("#sbGo").disabled = false;
+}
+$("#sbPick").addEventListener("click", async () => setSbFile(await api.pick_video()));
+$("#sbGo").addEventListener("click", async () => {
+  if (!sbFile) { toast(t("sub_pick_first"), true); return; }
+  const r = await api.make_subtitle(sbFile.path);
+  if (r.ok) await poll(); else toast(t("e_" + (r.error || "unknown")), true);
+});
+$("#sbClear").addEventListener("click", async () => { await api.clear_finished(); await poll(); });
+const sdz = $("#sbDrop");
+sdz.addEventListener("dragenter", () => sdz.classList.add("over"));
+sdz.addEventListener("dragleave", () => sdz.classList.remove("over"));
+sdz.addEventListener("drop", () => sdz.classList.remove("over"));
+
 const tdz = $("#tcDrop");
 tdz.addEventListener("dragenter", () => tdz.classList.add("over"));
 tdz.addEventListener("dragleave", () => tdz.classList.remove("over"));
@@ -580,6 +615,7 @@ dz.addEventListener("drop", () => dz.classList.remove("over"));
 window.onFileDropped = (info) => {
   const view = $(".nav-item.is-active") && $(".nav-item.is-active").dataset.view;
   if (view === "conv") setTcFile(info);
+  else if (view === "sub") setSbFile(info);
   else { showView("gif"); setCvFile(info); }
 };
 

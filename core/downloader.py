@@ -10,7 +10,8 @@ import time
 from pathlib import Path
 
 from . import gif as gifmod
-from . import history, paths, sizefit, tools
+from . import history, paths, sizefit, subtitle, tools
+from . import translate
 from .version import __version__
 
 URL_RE = re.compile(r"^https?://\S+$", re.I)
@@ -233,6 +234,18 @@ class Engine:
             self._cv.notify()
         return job["id"]
 
+    def add_subtitle(self, src):
+        """パソコン内の動画/音声を文字起こし＋翻訳して、同じフォルダに .srt を作る。"""
+        if not isinstance(src, str) or not os.path.isfile(src):
+            raise ValueError("bad_file")
+        job = self._new_job(url=src, fmt="srt", quality="", bitrate="", kind="subtitle",
+                            outdir=os.path.dirname(os.path.abspath(src)),
+                            title=os.path.splitext(os.path.basename(src))[0])
+        with self._cv:
+            self._jobs.append(job)
+            self._cv.notify()
+        return job["id"]
+
     # ---------------------------------------------------------- 履歴
     def _history_on(self):
         try:
@@ -252,7 +265,8 @@ class Engine:
         if not self._history_on():
             return
         with self._cv:
-            entries = [{k: j.get(k) for k in history.KEYS} for j in self._jobs if j["status"] in FINAL]
+            entries = [{k: j.get(k) for k in history.KEYS}
+                       for j in self._jobs if j["status"] in FINAL and j["kind"] != "subtitle"]
         try:
             history.save(entries)
         except OSError:
@@ -442,6 +456,10 @@ class Engine:
             if not ffdir:
                 return self._fail(job, "tools_missing")
             return self._convert_file(job, ffdir)
+        if job.get("kind") == "subtitle":                      # 動画/音声 → 字幕(.srt)
+            if not ffdir:
+                return self._fail(job, "tools_missing")
+            return self._run_subtitle(job, ffdir)
         ytdlp = self.tools["ytdlp"]()
         deno = self.tools["deno"]()
         if not ytdlp or not ffdir:
@@ -464,6 +482,19 @@ class Engine:
         finally:
             if workdir:
                 shutil.rmtree(workdir, ignore_errors=True)
+        # ダウンロードが終わったら、設定に応じて字幕を自動生成する（GIFは対象外）
+        if (job["status"] == "done" and job["fmt"] != "gif" and job["filepath"]
+                and self._subtitle_wanted()):
+            try:
+                self.add_subtitle(job["filepath"])
+            except ValueError:
+                pass
+
+    def _subtitle_wanted(self):
+        try:
+            return bool(self.settings.get("auto_subtitle"))
+        except Exception:
+            return False
 
     def _run_ytdlp(self, job, ytdlp, ffdir, deno, outdir):
         donefile = str(paths.tmp_dir() / f"done{job['id']}.txt")      # 完成パスの受け取り用（UTF-8）
@@ -569,6 +600,166 @@ class Engine:
                 os.remove(path)
         except OSError:
             pass
+
+    # ---------------------------------------------------------- 字幕
+    def _stage(self, job, stage, percent=0.0):
+        with self._cv:
+            job.update(stage=stage, percent=percent, speed=0.0, eta=0)
+
+    def _set_percent(self, job, pct):
+        with self._cv:
+            job["percent"] = max(0.0, min(99.0, pct))
+
+    def _dl_percent(self, job, done, total):
+        with self._cv:
+            if total:
+                job["percent"] = min(100.0, 100.0 * done / total)
+
+    def _run_whisper(self, job, args):
+        """whisper-cliを動かし、進捗(%)を job["percent"] に反映する。返り値: (終了コード, 最後のメッセージ)"""
+        env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+        p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
+                             creationflags=tools.NO_WINDOW, stdin=subprocess.DEVNULL)
+        with self._cv:
+            self._procs[job["id"]] = p
+        tail = []
+        try:
+            for raw in p.stdout:
+                line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                pct = subtitle.parse_progress(line)
+                if pct is not None:
+                    with self._cv:
+                        job["percent"] = max(job["percent"], min(99.0, float(pct)))
+                elif line.strip():
+                    tail.append(line)
+                    tail = tail[-10:]
+                    self._log(job, "[whisper] " + line)
+            rc = p.wait()
+        finally:
+            with self._cv:
+                self._procs.pop(job["id"], None)
+        return rc, tail
+
+    def _run_subtitle(self, job, ffdir):
+        """動画/音声 → 文字起こし → 翻訳 → .srt。各段階の進捗・中止・失敗理由を出す。"""
+        src = job["url"]
+        if not os.path.isfile(src):
+            return self._fail(job, "bad_file", "the source file is missing")
+        s = self.settings
+        model_name = s.get("sub_model")
+        # 1) whisper本体とモデルの用意（初回だけダウンロード、進捗を出す）
+        cli = tools.whisper_cli_path()
+        if not cli:
+            self._stage(job, "fetch_whisper")
+            try:
+                tools.fetch("whisper", progress=lambda d, t: self._dl_percent(job, d, t),
+                            cancel=lambda: self._canceled(job))
+            except InterruptedError:
+                with self._cv:
+                    job["status"] = "canceled"
+                return
+            except Exception as e:  # noqa: BLE001
+                return self._fail(job, "whisper_setup", str(e))
+            cli = tools.whisper_cli_path()
+            if not cli:
+                return self._fail(job, "whisper_setup", "whisper-cli is not available after download")
+        model = tools.whisper_model_path(model_name)
+        if not model.exists():
+            self._stage(job, "fetch_model")
+            try:
+                tools.fetch_model(model_name, progress=lambda d, t: self._dl_percent(job, d, t),
+                                  cancel=lambda: self._canceled(job))
+            except InterruptedError:
+                with self._cv:
+                    job["status"] = "canceled"
+                return
+            except Exception as e:  # noqa: BLE001
+                return self._fail(job, "model_setup", str(e))
+        workdir = str(paths.tmp_dir() / f"sub{job['id']}_{int(time.time())}")
+        os.makedirs(workdir, exist_ok=True)
+        try:
+            # 2) 音声を16kHzモノラルWAVに取り出す
+            self._stage(job, "extract", 0.0)
+            wav = os.path.join(workdir, "audio.wav")
+            dur = gifmod.probe_duration(tools.ffprobe_exe(ffdir), src, tools.NO_WINDOW) or 0.1
+            args = subtitle.extract_wav_args(tools.ffmpeg_exe(ffdir), src, wav)
+            rc, tail = self._ffmpeg(job, args, dur, 0.0, 100.0)
+            if self._canceled(job):
+                with self._cv:
+                    job["status"] = "canceled"
+                return
+            if rc != 0 or not os.path.isfile(wav) or os.path.getsize(wav) < 1000:
+                return self._fail(job, "no_audio", "could not extract audio\n" + "\n".join(tail))
+            # 3) 文字起こし
+            self._stage(job, "transcribe", 0.0)
+            out_base = os.path.join(workdir, "out")
+            wa = subtitle.whisper_args(cli, str(model), wav, out_base, s.get("sub_source_lang"),
+                                       threads=os.cpu_count() or 0)
+            rc, tail = self._run_whisper(job, wa)
+            if self._canceled(job):
+                with self._cv:
+                    job["status"] = "canceled"
+                return
+            srt_file = out_base + ".srt"
+            if rc != 0 or not os.path.isfile(srt_file):
+                return self._fail(job, "whisper_fail", "\n".join(tail) or "transcription failed")
+            with open(srt_file, encoding="utf-8") as f:
+                cues = subtitle.parse_srt(f.read())
+            if not cues:
+                return self._fail(job, "no_speech", "no speech was recognized in the audio")
+            # 4) 翻訳（オフなら元の言語のまま）
+            if s.get("sub_translate"):
+                self._stage(job, "translate", 0.0)
+                texts, idx = subtitle.collapse_for_translation(cues)
+                try:
+                    tr = translate.translate_lines(
+                        texts, s.get("sub_target_lang"), s.get("sub_source_lang"),
+                        progress=lambda d, t: self._set_percent(job, 100.0 * d / max(t, 1)),
+                        cancel=lambda: self._canceled(job))
+                except InterruptedError:
+                    with self._cv:
+                        job["status"] = "canceled"
+                    return
+                except Exception as e:  # noqa: BLE001
+                    return self._fail(job, "translate_fail", str(e))
+                for i, t in zip(idx, tr):
+                    if t and t.strip():
+                        cues[i]["text"] = t.strip()
+            # 5) 保存（動画と同じフォルダ・同じ名前の .srt）
+            self._stage(job, "save", 60.0)
+            final = subtitle.srt_path_for(src)
+            with open(final, "w", encoding="utf-8") as f:
+                f.write(subtitle.build_srt(cues))
+            out_path = final
+            # 焼き込み（オプション。元の動画は残し、別ファイルを作る）
+            if s.get("sub_burn") and src.lower().endswith((".mp4", ".mkv", ".mov", ".webm", ".m4v", ".avi")):
+                burned = self._burn_subtitle(job, ffdir, src, final, workdir, dur)
+                if burned:
+                    out_path = burned
+            with self._cv:
+                job.update(status="done", percent=100.0, speed=0.0, eta=0, stage="",
+                           filepath=out_path, size=os.path.getsize(final))
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    def _burn_subtitle(self, job, ffdir, src, srt, workdir, dur):
+        """字幕を映像に焼き込む。パスの特殊文字を避けるため、作業フォルダの単純名で処理してから書き出す。"""
+        self._stage(job, "burn", 0.0)
+        tmp_srt = os.path.join(workdir, "sub.srt")
+        shutil.copyfile(srt, tmp_srt)
+        stem, ext = os.path.splitext(src)
+        out = stem + ".subbed" + (ext if ext.lower() in (".mp4", ".mkv", ".mov", ".m4v") else ".mp4")
+        tmp_out = os.path.join(workdir, "burned.mp4")
+        args = subtitle.burn_args(tools.ffmpeg_exe(ffdir), src, tmp_srt, tmp_out)
+        rc, tail = self._ffmpeg(job, args, dur, 0.0, 100.0)
+        if self._canceled(job) or rc != 0 or not os.path.isfile(tmp_out):
+            self._log(job, "[OQIDA] burn-in skipped (failed): " + "\n".join(tail[-3:]))
+            return None
+        try:
+            shutil.move(tmp_out, out)
+            return out
+        except OSError:
+            return None
 
     def _convert_file(self, job, ffdir):
         """パソコン内のファイルを別の形式に変換して、元と同じフォルダに保存する"""

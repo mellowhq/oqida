@@ -241,6 +241,14 @@ class Api:
         except ValueError as e:
             return {"ok": False, "error": str(e)}
 
+    def make_subtitle(self, path):
+        """パソコン内の動画/音声から字幕(.srt)を作る。設定（翻訳先の言語・モデルなど）に従う。"""
+        try:
+            jid = self._engine.add_subtitle(path)
+            return {"ok": True, "id": jid}
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+
     def _on_drop(self, path):
         """ウィンドウへのドラッグ＆ドロップ（試験的）。選ばれたファイルの情報を画面へ渡す"""
         info = self.inspect_video(path)
