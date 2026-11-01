@@ -22,6 +22,10 @@ DENO_URL = "https://github.com/denoland/deno/releases/latest/download/deno-x86_6
 # 字幕の文字起こしに使う whisper.cpp（本体に同梱せず、字幕を初めて使うときに bin/whisper へ取得する）
 WHISPER_REPO = "ggml-org/whisper.cpp"
 WHISPER_ASSET = "whisper-bin-x64.zip"           # Windows・CPU版。中に whisper-cli.exe と必要なDLLが入っている
+# whisper.cpp は「v1.9.x（ソースのみ）」と「bNNNN（Windowsバイナリ付き）」の2系統でリリースしており、
+# releases/latest はソースのみを指すことがある。そのため、バイナリが付いたリリースを一覧から探す。
+# 下は、APIが使えないとき用の控え（whisper-bin-x64.zip が付いていた既知のリリース）。
+WHISPER_FALLBACK_TAG = "b5454"
 # 音声認識モデル。Hugging Face から取得する。大きさ(MB)はダウンロード前の目安表示に使う
 MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-{}.bin"
 WHISPER_MODELS = {"tiny": 75, "base": 142, "small": 466, "medium": 1500, "large-v3": 2900}
@@ -278,19 +282,26 @@ def _fetch_zip_members(url, wanted, progress, cancel):
         raise RuntimeError(f"missing in zip: {set(wanted) - found}")
 
 
+def _whisper_asset_url():
+    """whisper-bin-x64.zip（Windows・CPU版）が付いている最新リリースのダウンロードURLを返す。
+    'latest' はソースのみのことがあるので、リリース一覧からバイナリ付きのものを探す。"""
+    try:
+        rels = http_json(f"https://api.github.com/repos/{WHISPER_REPO}/releases?per_page=30")
+        for rel in rels:                                     # 一覧は新しい順。バイナリが付いた最初のものを使う
+            for a in rel.get("assets", []):
+                if a.get("name") == WHISPER_ASSET:
+                    return a["browser_download_url"]
+    except Exception:
+        pass
+    # APIが使えないときは、バイナリが付いていた既知のリリースから取る
+    return f"https://github.com/{WHISPER_REPO}/releases/download/{WHISPER_FALLBACK_TAG}/{WHISPER_ASSET}"
+
+
 def _fetch_whisper(progress, cancel):
     """whisper.cpp（CPU版）をGitHubから取得して bin/whisper に展開する。
     zipの中は Release/ の下に whisper-cli.exe と複数のDLLが入っているので、
     フォルダ構成は無視して実行ファイルとDLLを whisper フォルダへ平らに取り出す。"""
-    url = f"https://github.com/{WHISPER_REPO}/releases/latest/download/{WHISPER_ASSET}"
-    try:                                                     # 資産URLをAPIから正確に拾えればそちらを使う
-        rel = http_json(f"https://api.github.com/repos/{WHISPER_REPO}/releases/latest")
-        for a in rel.get("assets", []):
-            if a.get("name") == WHISPER_ASSET:
-                url = a["browser_download_url"]
-                break
-    except Exception:
-        pass
+    url = _whisper_asset_url()
     tmp = paths.tmp_dir() / "whisper.zip.part"
     download_file(url, tmp, progress, cancel)
     wdir = whisper_dir()

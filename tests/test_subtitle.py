@@ -94,6 +94,24 @@ def test_google_batch_fallback_on_mismatch(monkeypatch):
 
 
 # ------------------------------------------------------------ whisper.cpp の展開
+def test_whisper_asset_url_skips_source_only_release(monkeypatch):
+    # v系（ソースのみ）を飛ばして、バイナリ(whisper-bin-x64.zip)が付いたb系を選ぶ
+    rels = [
+        {"tag_name": "v1.9.5", "assets": [{"name": "Source code (zip)"}]},
+        {"tag_name": "b5454", "assets": [
+            {"name": "whisper-blas-bin-x64.zip", "browser_download_url": "http://x/blas"},
+            {"name": "whisper-bin-x64.zip", "browser_download_url": "http://x/cpu"}]},
+    ]
+    monkeypatch.setattr(tools, "http_json", lambda *a, **k: rels)
+    assert tools._whisper_asset_url() == "http://x/cpu"
+
+
+def test_whisper_asset_url_fallback_when_api_down(monkeypatch):
+    monkeypatch.setattr(tools, "http_json", lambda *a, **k: (_ for _ in ()).throw(Exception("down")))
+    url = tools._whisper_asset_url()
+    assert url.endswith("/whisper-bin-x64.zip") and tools.WHISPER_FALLBACK_TAG in url
+
+
 def test_fetch_whisper_extracts_exe_and_dll(tmp_path, monkeypatch):
     monkeypatch.setenv("OQIDA_HOME", str(tmp_path))
     monkeypatch.delenv("OQIDA_WHISPER", raising=False)
