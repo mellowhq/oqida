@@ -20,6 +20,11 @@ function fmtBytes(n) {
   const mb = n / 1048576;
   return mb >= 1024 ? (mb / 1024).toFixed(2) + " GB" : mb.toFixed(mb < 10 ? 1 : 0) + " MB";
 }
+function fmtSize(n) {               // 完了時のサイズ表示。字幕(.srt)など小さいファイルはKBで出す
+  if (!n) return "";
+  if (n < 1048576) return Math.max(1, Math.round(n / 1024)) + " KB";
+  return (n / 1e6).toFixed(1) + " MB";
+}
 function fmtSpeed(bps) { return bps > 0 ? (bps / 1048576).toFixed(1) + " MB/s" : ""; }
 function fmtEta(sec) {
   if (!sec || sec < 0) return "";
@@ -184,6 +189,7 @@ function renderSettings() {
   // ファイル変換ページ: 区間オンのときだけ表示。音声のロスレス(FLAC/WAV)はサイズ上限の対象外の注意は size_note で足りる
   const tcRangeOn = $("#tcRangeOn").checked;
   $$(".tc-range").forEach((el) => (el.hidden = !tcRangeOn));
+  $("#sbBurnNote").hidden = !st.sub_burn;                                // 焼き込みオンのときだけ注意書きを出す
   $("#folderPath").textContent = st.download_dir_effective;
   $("#folderPath").title = st.download_dir_effective;
   renderSwatches();
@@ -487,7 +493,7 @@ function updateRow(el, job) {
   const live = job.status === "running" && !converting;
   $(".speed", el).textContent = live ? fmtSpeed(job.speed) : "";
   $(".eta", el).textContent = live ? fmtEta(job.eta) : "";
-  $(".size", el).textContent = job.status === "done" && job.size ? (job.size / 1e6).toFixed(1) + " MB" : "";
+  $(".size", el).textContent = job.status === "done" ? fmtSize(job.size) : "";
   $(".fit", el).textContent = job.status === "done" && job.fitted ? t("fitted") : "";
   const bar = $(".bar", el);
   $("i", bar).style.width = job.percent.toFixed(1) + "%";

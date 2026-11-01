@@ -50,6 +50,16 @@ def test_whisper_args():
     a = subtitle.whisper_args("cli", "m.bin", "a.wav", "/out", "ja", threads=4)
     assert a[a.index("-of") + 1] == "/out" and "-osrt" in a
     assert a[a.index("-l") + 1] == "ja" and a[a.index("-t") + 1] == "4"
+    assert "-sns" in a                                        # 非音声トークン（[音楽]等）を抑制
+
+
+def test_burn_args_has_font_and_copies_audio():
+    a = subtitle.burn_args("ffmpeg", "in.mp4", "/tmp/sub.srt", "out.mp4",
+                           font="Yu Gothic UI", fontsdir="C:\\Windows\\Fonts")
+    vf = a[a.index("-vf") + 1]
+    assert "subtitles=" in vf and "FontName=Yu Gothic UI" in vf     # 日本語フォントを指定
+    assert "fontsdir=" in vf                                        # フォントの場所も渡す
+    assert a[a.index("-c:a") + 1] == "copy"                         # 音声は作り直さない
 
 
 def test_collapse_skips_empty():

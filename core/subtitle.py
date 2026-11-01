@@ -91,21 +91,34 @@ def extract_wav_args(ffmpeg, src, wav):
 
 
 def whisper_args(cli, model, wav, out_base, source_lang="auto", threads=0):
-    """whisper-cli に渡す引数。out_base + '.srt' が作られる。"""
+    """whisper-cli に渡す引数。out_base + '.srt' が作られる。
+    -sns は「[音楽]」「[拍手]」などの非音声トークンを抑制して、字幕をきれいにする。"""
     a = [cli, "-m", model, "-f", wav, "-osrt", "-of", out_base, "-l", source_lang or "auto",
-         "--print-progress"]
+         "-sns", "--print-progress"]
     if threads and int(threads) > 0:
         a += ["-t", str(int(threads))]
     return a
 
 
-def burn_args(ffmpeg, video, srt, out):
-    """字幕を映像に焼き込むffmpeg引数（オプション機能）。
-    注意: ffmpegのsubtitlesフィルタはパスに特殊文字があると扱いが難しいので、
-    呼び出し側で srt・出力を単純な名前にしてから渡すこと。"""
-    srt_f = srt.replace("\\", "/").replace(":", "\\:")
+def _ass_escape(p):
+    """ffmpegのsubtitlesフィルタ内でパスを安全に書くためのエスケープ（\\ → /、: → \\:）。"""
+    return p.replace("\\", "/").replace(":", "\\:")
+
+
+def burn_args(ffmpeg, video, srt, out, font="Yu Gothic UI", fontsdir=None):
+    """字幕を映像に焼き込むffmpeg引数。
+    日本語などを焼き込むとフォントが無くて豆腐(□)になりやすいので、
+    日本語を含むフォント(既定: Windows標準の Yu Gothic UI)を指定し、
+    フォントの場所(Windowsのフォントフォルダ)も教える。
+    注意: パスの特殊文字を避けるため、呼び出し側で srt・出力を単純な名前にしてから渡すこと。"""
+    srt_f = _ass_escape(srt)
+    style = f"force_style='FontName={font},Outline=1,Shadow=0'"
+    inner = f"subtitles='{srt_f}'"
+    if fontsdir:
+        inner += f":fontsdir='{_ass_escape(fontsdir)}'"
+    vf = f"{inner}:{style}"
     return [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1",
-            "-i", video, "-vf", f"subtitles='{srt_f}'", "-c:a", "copy", out]
+            "-i", video, "-vf", vf, "-c:a", "copy", out]
 
 
 def collapse_for_translation(cues):

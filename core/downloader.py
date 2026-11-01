@@ -750,7 +750,10 @@ class Engine:
         stem, ext = os.path.splitext(src)
         out = stem + ".subbed" + (ext if ext.lower() in (".mp4", ".mkv", ".mov", ".m4v") else ".mp4")
         tmp_out = os.path.join(workdir, "burned.mp4")
-        args = subtitle.burn_args(tools.ffmpeg_exe(ffdir), src, tmp_srt, tmp_out)
+        fontsdir = None
+        if paths.IS_WINDOWS:                                 # 日本語フォントの場所を libass に教える
+            fontsdir = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "Fonts")
+        args = subtitle.burn_args(tools.ffmpeg_exe(ffdir), src, tmp_srt, tmp_out, fontsdir=fontsdir)
         rc, tail = self._ffmpeg(job, args, dur, 0.0, 100.0)
         if self._canceled(job) or rc != 0 or not os.path.isfile(tmp_out):
             self._log(job, "[OQIDA] burn-in skipped (failed): " + "\n".join(tail[-3:]))
