@@ -42,7 +42,8 @@ class AppUpdater:
         try:
             rel = http_json(f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest")
             tag = rel.get("tag_name", "")
-            asset = next((a for a in rel.get("assets", []) if a.get("name", "").lower().endswith("setup.exe")), None)
+            want = ".dmg" if paths.IS_MAC else "setup.exe"       # macは.dmg、Windowsはインストーラー(.exe)
+            asset = next((a for a in rel.get("assets", []) if a.get("name", "").lower().endswith(want)), None)
             if is_newer(tag, __version__) and asset:
                 digest = (asset.get("digest") or "")
                 self._info = {
@@ -86,10 +87,14 @@ class AppUpdater:
                 self._state.update(state="error", error="dev_mode")
                 return False
             self._state["state"] = "installing"
-            exe = self._installer
+            inst = self._installer
         try:
-            subprocess.Popen([exe, "/SILENT", "/CLOSEAPPLICATIONS", "/NORESTART", "/SP-"],
-                             creationflags=DETACHED if paths.IS_WINDOWS else 0, close_fds=True)
+            if paths.IS_MAC:
+                # macは.dmgを開いて（マウントして）、ユーザーがアプリを置き換える。アプリ自身は終了する。
+                subprocess.Popen(["open", inst], close_fds=True)
+            else:
+                subprocess.Popen([inst, "/SILENT", "/CLOSEAPPLICATIONS", "/NORESTART", "/SP-"],
+                                 creationflags=DETACHED if paths.IS_WINDOWS else 0, close_fds=True)
         except Exception as e:  # noqa: BLE001
             self._set(state="error", error=_short(e))
             return False
