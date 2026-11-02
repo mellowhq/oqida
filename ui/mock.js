@@ -8,6 +8,7 @@
     mp4_quality: "1080", mp3_bitrate: "320", gif_width: "480", gif_fps: "15", conv_format: "mp4", size_limit_mb: qs.get("limit") || "0",
     max_parallel: "1", speed_limit: "0", save_thumb: false, history_keep: true, ytdlp_skip: qs.get("back") ? "2026.10.30" : "",
     cookies_browser: "none", auto_check_app: true, auto_update_ytdlp: true,
+    onboarded: !qs.get("onboard"),
     download_dir: "", download_dir_effective: "C:\\Users\\mel\\Downloads\\OQIDA",
     language_effective: (qs.get("lang") || "ja") === "auto" ? "ja" : (qs.get("lang") || "ja"),
   };
@@ -43,7 +44,8 @@
   const ok = async () => ({ ok: true });
   const find = (id) => jobs.find((j) => j.id === id);
   window.pywebview = { api: {
-    get_state: async () => state(), startup: ok, set_setting: async (k, v) => { settings[k] = v; return { ok: true }; },
+    get_state: async () => state(), startup: async () => { window.__startedup = true; return { ok: true }; },
+    set_setting: async (k, v) => { settings[k] = v; (window.__set = window.__set || {})[k] = v; return { ok: true }; },
     add_download: async (u, g, f) => {
       window.__addCall = [u, g, !!f];
       if (qs.get("dup") && !f) return { ok: false, error: "duplicate", title: "Lo-fi Beats for Studying" };

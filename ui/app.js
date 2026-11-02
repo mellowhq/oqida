@@ -592,6 +592,11 @@ window.onFileDropped = (info) => {
 /* ---------------- 初回セットアップ ---------------- */
 const PART_NAMES = { ytdlp: "yt-dlp", ffmpeg: "ffmpeg", deno: "Deno" };
 function renderSetup() {
+  if (S.settings && S.settings.onboarded === false) {   // クイックスタート中は部品のセットアップ画面を出さない
+    $("#setup").hidden = true;
+    $("#startBtn").disabled = true;
+    return;
+  }
   const su = S.setup;
   const need = su.missing.length > 0;
   $("#setup").hidden = !need;
@@ -676,8 +681,9 @@ let updApplying = false;
 function renderUpdDialog() {
   const a = S.app_update;
   const dlg = $("#updDialog");
-  // 最初のセットアップ中は聞かない。終わってから聞く。
-  if (!updPrompted && !updAccepted && a.state === "available" && S.setup.missing.length === 0) {
+  // 最初のクイックスタート・セットアップ中は聞かない。終わってから聞く。
+  if (!updPrompted && !updAccepted && a.state === "available" && S.setup.missing.length === 0
+      && S.settings.onboarded !== false) {
     updPrompted = true;
     dlg.hidden = false;
   }
@@ -804,14 +810,49 @@ async function poll() {
   busyPoll = false;
 }
 
+/* ---------------- 初回クイックスタート ---------------- */
+function segSelect(groupId, val) {
+  $$("#" + groupId + " button").forEach((b) => b.classList.toggle("on", b.dataset.val === val));
+}
+function renderOnboard() {
+  const st = S.settings;
+  segSelect("onbLang", st.language === "auto" ? st.language_effective : st.language);
+  segSelect("onbTheme", st.theme);
+  $("#onbPath").textContent = st.download_dir_effective;
+  $("#onbPath").title = st.download_dir_effective;
+}
+function wireOnboard() {
+  $$("#onbLang button").forEach((b) => b.addEventListener("click", async () => {
+    S.settings.language = b.dataset.val; segSelect("onbLang", b.dataset.val);
+    applyLang(); await api.set_setting("language", b.dataset.val);
+  }));
+  $$("#onbTheme button").forEach((b) => b.addEventListener("click", async () => {
+    S.settings.theme = b.dataset.val; segSelect("onbTheme", b.dataset.val);
+    applyTheme(); await api.set_setting("theme", b.dataset.val);
+  }));
+  $("#onbFolderBtn").addEventListener("click", async () => { await api.pick_folder(); await poll(); renderOnboard(); });
+  $("#onbStart").addEventListener("click", async () => {
+    S.settings.onboarded = true;
+    $("#onboard").hidden = true;
+    await api.set_setting("onboarded", true);
+    api.startup();                         // 設定が終わってから、必要な部品のダウンロードを始める
+  });
+}
+
 async function init() {
   api = window.pywebview.api;
   S = await api.get_state();
   buildSwatches();
+  wireOnboard();
   const qs = new URLSearchParams(location.search);
   if (qs.get("view")) showView(qs.get("view"));
   applyTheme(); applyLang(); renderAll();
-  api.startup();
+  if (S.settings.onboarded === false) {    // 初回はクイックスタートを出し、終わってからセットアップへ
+    $("#onboard").hidden = false;
+    renderOnboard();
+  } else {
+    api.startup();
+  }
   setInterval(poll, 500);
   $("#urlInput").focus();
 }

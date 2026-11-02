@@ -450,6 +450,30 @@ def test_file_convert_page(page):
     assert page.evaluate("window.__tcCall") == ["C:\\Videos\\clip.mp4", "mp3", {"start": "5", "length": "20"}]
 
 
+def test_onboarding(browser_only):
+    ctx = browser_only.new_context(viewport={"width": 940, "height": 700})
+    pg = ctx.new_page()
+    errs = []
+    pg.on("pageerror", lambda e: errs.append(str(e)))
+    pg.goto(UI + "?mock=1&lang=ja&onboard=1")
+    pg.wait_for_timeout(400)
+    assert pg.is_visible("#onboard")                      # 初回はクイックスタートが出る
+    assert pg.is_hidden("#setup")                         # セットアップ画面は後回し
+    # 言語を英語にすると、その場で文言が切り替わる
+    pg.click("#onbLang button[data-val=en]"); pg.wait_for_timeout(150)
+    assert pg.inner_text("#onbStart") == "Get started"
+    # テーマ切替が効く
+    pg.click("#onbTheme button[data-val=light]"); pg.wait_for_timeout(150)
+    assert pg.eval_on_selector("html", "e=>e.dataset.theme") == "light"
+    # はじめる → 閉じて、onboarded が保存される
+    pg.click("#onbStart"); pg.wait_for_timeout(300)
+    assert pg.is_hidden("#onboard")
+    assert pg.evaluate("window.__set.onboarded") is True   # onboarded が保存される
+    assert pg.evaluate("window.__startedup") is True       # 設定後に部品セットアップが始まる
+    assert errs == []
+    ctx.close()
+
+
 def test_convert_list_is_separate(page):
     # 3つの一覧がそれぞれ別（ダウンロード/GIF変換/ファイル変換）
     dl = page.eval_on_selector_all("#queue .job .title", "e=>e.map(x=>x.textContent)")

@@ -453,6 +453,42 @@
   </main>
 </div>
 
+<!-- 初回クイックスタート -->
+<div class="overlay" id="onboard" hidden>
+  <div class="setup-card onboard-card">
+    <svg class="mark big" viewBox="0 0 24 24" width="44" height="44" aria-hidden="true">
+      <g fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="M12 6.6 V15.4 M8.4 11.9 L12 15.5 L15.6 11.9"/></g>
+    </svg>
+    <h1 data-i18n="onb_title"></h1>
+    <p class="dim" data-i18n="onb_body"></p>
+    <div class="onb-rows">
+      <div class="onb-row">
+        <div class="onb-label" data-i18n="onb_lang"></div>
+        <div class="seg" id="onbLang">
+          <button type="button" data-val="ja">日本語</button>
+          <button type="button" data-val="en">English</button>
+        </div>
+      </div>
+      <div class="onb-row">
+        <div class="onb-label" data-i18n="onb_theme"></div>
+        <div class="seg" id="onbTheme">
+          <button type="button" data-val="dark" data-i18n="theme_dark"></button>
+          <button type="button" data-val="light" data-i18n="theme_light"></button>
+          <button type="button" data-val="system" data-i18n="theme_system"></button>
+        </div>
+      </div>
+      <div class="onb-row">
+        <div class="onb-label" data-i18n="onb_folder"></div>
+        <div class="onb-folder">
+          <span class="path" id="onbPath"></span>
+          <button class="btn" id="onbFolderBtn" data-i18n="change"></button>
+        </div>
+      </div>
+    </div>
+    <button class="btn primary" id="onbStart" data-i18n="onb_start"></button>
+  </div>
+</div>
+
 <!-- 初回セットアップ -->
 <div class="overlay" id="setup" hidden>
   <div class="setup-card">

@@ -150,6 +150,21 @@ select option { background: var(--surface); color: var(--text); }
 .setup-card .bar { height: 5px; margin-top: 6px; }
 .setup-card .small { margin-top: 10px; min-height: 18px; }
 .setup-err { margin: 16px 0 12px; color: var(--danger); font-size: 13px; word-break: break-word; }
+
+/* 初回クイックスタート */
+#onboard { z-index: 15; }
+.onboard-card { width: min(470px, 90vw); }
+.onb-rows { text-align: left; margin: 10px 0 24px; display: flex; flex-direction: column; gap: 16px; }
+.onb-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.onb-label { font-weight: 600; font-size: 14px; flex: none; }
+.seg { display: inline-flex; background: var(--surface); border: 1px solid var(--line); border-radius: 9px; padding: 3px; gap: 3px; }
+.seg button { height: 30px; padding: 0 14px; border: 0; border-radius: 7px; background: none; color: var(--dim); font: inherit; font-weight: 600; font-size: 13px; cursor: pointer; transition: background .12s, color .12s; }
+.seg button.on { background: var(--accent); color: var(--accent-ink); }
+.seg button:hover:not(.on) { color: var(--text); }
+.onb-folder { display: flex; align-items: center; gap: 10px; min-width: 0; max-width: 60%; }
+.onb-folder .path { font-size: 12.5px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.onb-folder .btn { height: 32px; padding: 0 14px; flex: none; }
+.onboard-card .btn.primary { margin: 0 auto; }
 .toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); z-index: 20; padding: 10px 18px; border-radius: 10px; background: var(--surface2); border: 1px solid var(--line); box-shadow: 0 6px 24px rgba(0,0,0,.35); font-size: 13px; max-width: 80vw; }
 .toast.err { border-color: var(--danger); }
 

@@ -87,6 +87,8 @@ const I18N = {
     s_parallel: "同時ダウンロード数", s_parallel_sub: "一度に何本まで同時に処理するか。",
     e_preview_fail: "情報を取得できませんでした。",
     set_start: "ここを開始", set_end: "ここを終了", play_sel: "区間を再生",
+    onb_title: "OQIDAへようこそ", onb_body: "使いはじめる前に、かんたんな設定を。あとで設定からいつでも変えられます。",
+    onb_lang: "言語", onb_theme: "テーマ", onb_folder: "保存先", onb_start: "はじめる",
   },
   en: {
     tab_main: "Download", tab_settings: "Settings",
@@ -176,6 +178,8 @@ const I18N = {
     s_parallel: "Simultaneous downloads", s_parallel_sub: "How many to process at the same time.",
     e_preview_fail: "Could not load the info.",
     set_start: "Set start", set_end: "Set end", play_sel: "Play range",
+    onb_title: "Welcome to OQIDA", onb_body: "Let's set a few things before you start. You can change these anytime in Settings.",
+    onb_lang: "Language", onb_theme: "Theme", onb_folder: "Save to", onb_start: "Get started",
   },
 };
 

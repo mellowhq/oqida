@@ -25,6 +25,7 @@ DEFAULTS = {
     "cookies_browser": "none",  # none / edge / chrome / firefox
     "auto_check_app": True,
     "auto_update_ytdlp": True,
+    "onboarded": False,         # 初回のクイックスタートを済ませたか
 }
 
 CHOICES = {
@@ -43,12 +44,30 @@ CHOICES = {
 }
 
 
+def _mac_language() -> str:
+    """macOSのシステム言語を調べる。固めたアプリだと locale で取れないことがあるので、
+    OSの設定（AppleLanguages）を直接読む。"""
+    try:
+        import subprocess
+        out = subprocess.run(["defaults", "read", "-g", "AppleLanguages"],
+                             capture_output=True, text=True, timeout=5)
+        return "ja" if "ja" in out.stdout.lower().replace('"', "").split(",")[0] else "en"
+    except Exception:
+        return ""
+
+
 def system_language() -> str:
     try:
         lang = (locale.getlocale()[0] or "") or (locale.getdefaultlocale()[0] or "")
     except Exception:
         lang = ""
-    return "ja" if lang.lower().startswith("ja") else "en"
+    if lang.lower().startswith("ja"):
+        return "ja"
+    if paths.IS_MAC and not lang:                 # Macで locale が空のときはOS設定を見る
+        m = _mac_language()
+        if m:
+            return m
+    return "en"
 
 
 class Settings:
@@ -73,7 +92,7 @@ class Settings:
     def _valid(key, value):
         if key in CHOICES:
             return value in CHOICES[key]
-        if key in ("auto_check_app", "auto_update_ytdlp", "save_thumb", "history_keep"):
+        if key in ("auto_check_app", "auto_update_ytdlp", "save_thumb", "history_keep", "onboarded"):
             return isinstance(value, bool)
         if key == "download_dir":
             return isinstance(value, str)
