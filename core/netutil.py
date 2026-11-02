@@ -1,6 +1,7 @@
 """ダウンロード用の小さな道具。標準ライブラリだけで動かす。"""
 import hashlib
 import json
+import ssl
 import urllib.request
 
 from .version import __version__
@@ -8,9 +9,23 @@ from .version import __version__
 UA = f"OQIDA/{__version__}"
 
 
+def _ssl_context():
+    """HTTPSの証明書を検証するための設定。
+    PyInstallerで固めたアプリ（特にmacOS）はOSの証明書を見つけられず
+    CERTIFICATE_VERIFY_FAILED になることがあるので、certifi のCA証明書を使う。"""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
+_CTX = _ssl_context()
+
+
 def http_json(url: str, timeout: int = 15):
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/vnd.github+json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with urllib.request.urlopen(req, timeout=timeout, context=_CTX) as r:
         return json.loads(r.read().decode("utf-8"))
 
 
@@ -18,7 +33,7 @@ def download_file(url, dest, progress=None, cancel=None, timeout=30):
     """urlをdestに保存。progress(done, total) を呼ぶ。cancel()がTrueなら中断。"""
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     sha = hashlib.sha256()
-    with urllib.request.urlopen(req, timeout=timeout) as r, open(dest, "wb") as f:
+    with urllib.request.urlopen(req, timeout=timeout, context=_CTX) as r, open(dest, "wb") as f:
         total = int(r.headers.get("Content-Length") or 0)
         done = 0
         while True:
