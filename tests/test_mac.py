@@ -82,14 +82,3 @@ def test_fetch_allowed_on_mac(monkeypatch):
     monkeypatch.delenv("OQIDA_ALLOW_FETCH", raising=False)
     monkeypatch.setattr(tools, "_fetch_ytdlp", lambda p, c: None)
     tools.fetch("ytdlp", None, None)                      # 例外が出なければOK
-
-
-def test_subtitle_disabled_on_mac(monkeypatch):
-    from core.settings import Settings
-    monkeypatch.setattr(paths, "IS_MAC", True)
-    e = downloader.Engine(Settings())
-    try:
-        e.settings.set("auto_subtitle", True)
-        assert e._subtitle_wanted() is False             # Macでは自動字幕は走らない
-    finally:
-        e.shutdown()

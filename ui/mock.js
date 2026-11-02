@@ -8,8 +8,6 @@
     mp4_quality: "1080", mp3_bitrate: "320", gif_width: "480", gif_fps: "15", conv_format: "mp4", size_limit_mb: qs.get("limit") || "0",
     max_parallel: "1", speed_limit: "0", save_thumb: false, history_keep: true, ytdlp_skip: qs.get("back") ? "2026.10.30" : "",
     cookies_browser: "none", auto_check_app: true, auto_update_ytdlp: true,
-    auto_subtitle: false, sub_translate: true, sub_burn: false,
-    sub_target_lang: "ja", sub_source_lang: "auto", sub_model: "small", sub_device: "auto",
     download_dir: "", download_dir_effective: "C:\\Users\\mel\\Downloads\\OQIDA",
     language_effective: (qs.get("lang") || "ja") === "auto" ? "ja" : (qs.get("lang") || "ja"),
   };
@@ -23,8 +21,6 @@
     { id: 8, url: "C:\\Videos\\play.mp4", kind: "convert", fmt: "gif", status: "done", stage: "", site: "", thumb: "", title: "play", percent: 100, speed: 0, eta: 0, filepath: "x", error: "", size: 7800000, fitted: false },
     { id: 10, url: "C:\\Videos\\talk.mov", kind: "transcode", fmt: "mp3", status: "running", stage: "convert", site: "", thumb: "", title: "talk", percent: 54, speed: 0, eta: 0, filepath: "", error: "" },
     { id: 11, url: "C:\\Videos\\clip.mkv", kind: "transcode", fmt: "mp4", status: "done", stage: "", site: "", thumb: "", title: "clip", percent: 100, speed: 0, eta: 0, filepath: "x", error: "", size: 18200000, fitted: true },
-    { id: 12, url: "C:\\Videos\\interview.mp4", kind: "subtitle", fmt: "srt", status: "running", stage: "transcribe", site: "", thumb: "", title: "interview", percent: 44, speed: 0, eta: 0, filepath: "", error: "" },
-    { id: 13, url: "C:\\Videos\\lecture.mp4", kind: "subtitle", fmt: "srt", status: "done", stage: "", site: "", thumb: "", title: "lecture", percent: 100, speed: 0, eta: 0, filepath: "C:\\Videos\\lecture.srt", error: "", size: 4200 },
     { id: 6, url: "https://youtu.be/ggg", fmt: "gif", status: "running", stage: "convert", site: "youtube.com", thumb: T("#33414d", "#6a8fa0"), title: "ねこがジャンプする瞬間", percent: 82, speed: 0, eta: 0, filepath: "", error: "" },
     { id: 5, url: "https://www.instagram.com/p/xyz", fmt: "mp4", status: "error", site: "instagram.com", thumb: "", title: "", percent: 12, speed: 0, eta: 0, filepath: "", error: "login" },
   ];
@@ -39,7 +35,7 @@
     : { state: "uptodate", current: "2026.10.30", latest: "2026.10.30", previous: qs.get("noprev") ? null : "2026.10.01" };
   const state = () => ({
     version: "0.5.0", jobs, setup,
-    platform: qs.get("mac") ? "mac" : "win", subtitle: !qs.get("mac"),
+    platform: qs.get("mac") ? "mac" : "win",
     settings,
     app_update: { state: upd, current: "0.5.0", latest: "0.6.0", notes: "- yt-dlpの更新処理を改善\n- 設定画面を追加", done: 40e6, total: 100e6, error: "" },
     ytdlp: { state: yt.state, current: yt.current, latest: yt.latest, error: "", previous: yt.previous, skip: settings.ytdlp_skip },
@@ -57,7 +53,6 @@
     pick_video: async () => ({ ok: true, path: "C:\\Videos\\clip.mp4", name: "clip.mp4", duration: 83, media: (new URLSearchParams(location.search)).get("media") || "" }),
     convert_gif: async (p, g) => { window.__cvCall = [p, g]; return { ok: true }; },
     convert_file: async (p, f, r) => { window.__tcCall = [p, f, r]; return { ok: true }; },
-    make_subtitle: async (p) => { window.__sbCall = [p]; return { ok: true }; },
     preview_url: async (u) => {
       if (/playlist|list=/.test(u)) return { ok: true, playlist: true, count: 23, title: "作業用BGMまとめ" };
       return { ok: true, playlist: false, title: "【4K】夜の熊本城を歩く Night Walk Kumamoto Castle",

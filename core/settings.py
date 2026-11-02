@@ -25,14 +25,6 @@ DEFAULTS = {
     "cookies_browser": "none",  # none / edge / chrome / firefox
     "auto_check_app": True,
     "auto_update_ytdlp": True,
-    # 字幕（音声認識＋翻訳）
-    "auto_subtitle": False,     # ダウンロード後に字幕を自動生成する
-    "sub_translate": True,      # 文字起こしを翻訳する（オフなら元の言語のまま）
-    "sub_burn": False,          # 字幕を映像に焼き込む（別ファイルを作る）
-    "sub_target_lang": "ja",    # 翻訳先の言語
-    "sub_source_lang": "auto",  # 元の言語（auto=自動判定）
-    "sub_model": "small",       # tiny / base / small / medium / large-v3
-    "sub_device": "auto",       # auto（GPUがあれば使う予定）/ cpu。今はCPUのみ対応
 }
 
 CHOICES = {
@@ -48,10 +40,6 @@ CHOICES = {
     "conv_format": {"mp4", "mp3", "m4a", "opus", "flac", "wav"},
     "size_limit_mb": {"0", "8", "10", "25", "50", "100", "500", "1000"},
     "cookies_browser": {"none", "edge", "chrome", "firefox"},
-    "sub_target_lang": {"ja", "en", "ko", "zh", "es", "fr", "de", "pt", "ru", "it"},
-    "sub_source_lang": {"auto", "ja", "en", "ko", "zh", "es", "fr", "de", "pt", "ru", "it"},
-    "sub_model": {"tiny", "base", "small", "medium", "large-v3"},
-    "sub_device": {"auto", "cpu"},
 }
 
 
@@ -85,8 +73,7 @@ class Settings:
     def _valid(key, value):
         if key in CHOICES:
             return value in CHOICES[key]
-        if key in ("auto_check_app", "auto_update_ytdlp", "save_thumb", "history_keep",
-                   "auto_subtitle", "sub_translate", "sub_burn"):
+        if key in ("auto_check_app", "auto_update_ytdlp", "save_thumb", "history_keep"):
             return isinstance(value, bool)
         if key == "download_dir":
             return isinstance(value, str)

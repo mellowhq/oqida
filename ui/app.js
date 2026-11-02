@@ -177,7 +177,6 @@ function renderSettings() {
   ["ctlGifStart", "ctlGifEnd", "ctlGifLen"].forEach((id) => ($("#" + id).hidden = !showRange));
   ["ctlGifWidth", "ctlGifFps", "gifNote"].forEach((id) => ($("#" + id).hidden = !isGif));
   $("#ctlThumb").hidden = isGif;
-  $("#ctlAutoSub").hidden = isGif;                                       // 字幕はGIFには付けない
   dlRange.setMax(isGif ? MAX_GIF : MAX_MEDIA);
   const limited = String(st.size_limit_mb) !== "0";
   $("#sizeNote").hidden = !limited;
@@ -189,13 +188,6 @@ function renderSettings() {
   // ファイル変換ページ: 区間オンのときだけ表示。音声のロスレス(FLAC/WAV)はサイズ上限の対象外の注意は size_note で足りる
   const tcRangeOn = $("#tcRangeOn").checked;
   $$(".tc-range").forEach((el) => (el.hidden = !tcRangeOn));
-  $("#sbBurnNote").hidden = !st.sub_burn;                                // 焼き込みオンのときだけ注意書きを出す
-  // 字幕機能はいまWindowsのみ。Mac等では左メニュー・設定・ダウンロードのトグルを隠す
-  const subOn = S.subtitle !== false;
-  const navSub = $(".nav-item[data-view=sub]"); if (navSub) navSub.hidden = !subOn;
-  $("#subtitleGroup").hidden = !subOn;
-  $("#subtitlePanel").hidden = !subOn;
-  if (!subOn) $("#ctlAutoSub").hidden = true;
   $("#folderPath").textContent = st.download_dir_effective;
   $("#folderPath").title = st.download_dir_effective;
   renderSwatches();
@@ -488,12 +480,7 @@ function updateRow(el, job) {
   $(".title", el).textContent = job.title || job.url;
   $(".title", el).title = job.title || job.url;
   $(".site", el).textContent = job.site || "";
-  let state;
-  if (job.kind === "subtitle" && job.status === "running") {
-    state = job.stage ? t("st_sub_" + job.stage) : t("st_running");
-  } else {
-    state = t("st_" + (converting ? "converting" : job.status));
-  }
+  let state = t("st_" + (converting ? "converting" : job.status));
   if (job.status === "error") state = t("e_" + (job.error || "unknown"));
   $(".state", el).textContent = state;
   const live = job.status === "running" && !converting;
@@ -517,15 +504,13 @@ function syncList(container, jobs, seen) {
 }
 const isDone = (j) => !["queued", "running"].includes(j.status);
 function renderJobs() {
-  const dl = S.jobs.filter((j) => j.kind !== "convert" && j.kind !== "transcode" && j.kind !== "subtitle");
+  const dl = S.jobs.filter((j) => j.kind !== "convert" && j.kind !== "transcode");
   const cv = S.jobs.filter((j) => j.kind === "convert");       // GIF変換
   const tc = S.jobs.filter((j) => j.kind === "transcode");     // ファイル変換
-  const sb = S.jobs.filter((j) => j.kind === "subtitle");      // 字幕
   const seen = new Set();
   syncList($("#queue"), dl, seen);
   syncList($("#cvQueue"), cv, seen);
   syncList($("#tcQueue"), tc, seen);
-  syncList($("#sbQueue"), sb, seen);
   for (const [id, el] of rows) if (!seen.has(id)) { el.remove(); rows.delete(id); }
   $("#clearBtn").hidden = !dl.some(isDone);
   $("#emptyBox").hidden = dl.length > 0;
@@ -537,9 +522,6 @@ function renderJobs() {
   $("#tcClear").hidden = !tc.some(isDone);
   $("#tcHead").hidden = tc.length === 0;
   $("#tcLabel").textContent = t("tc_list") + (tc.length ? " (" + tc.length + ")" : "");
-  $("#sbClear").hidden = !sb.some(isDone);
-  $("#sbHead").hidden = sb.length === 0;
-  $("#sbLabel").textContent = t("sub_list") + (sb.length ? " (" + sb.length + ")" : "");
 }
 
 /* ---------------- GIF変換（パソコン内の動画） ---------------- */
@@ -590,29 +572,6 @@ $("#tcGo").addEventListener("click", async () => {
 });
 $("#tcClear").addEventListener("click", async () => { await api.clear_finished(); await poll(); });
 
-/* ---------------- 字幕（パソコン内の動画/音声 → .srt） ---------------- */
-let sbFile = null;
-function setSbFile(info) {
-  if (!info || !info.ok) { if (info && info.error && info.error !== "canceled") toast(t("e_" + (info.error === "bad_file" ? "bad_file" : "drop_na")), true); return; }
-  sbFile = info;
-  $("#sbFileName").textContent = info.name;
-  $("#sbFileName").title = info.path;
-  $("#sbFileMeta").textContent = info.duration ? t("cv_len", { d: fmtDur(info.duration) }) : "";
-  $("#sbDrop").classList.add("has-file");
-  $("#sbGo").disabled = false;
-}
-$("#sbPick").addEventListener("click", async () => setSbFile(await api.pick_video()));
-$("#sbGo").addEventListener("click", async () => {
-  if (!sbFile) { toast(t("sub_pick_first"), true); return; }
-  const r = await api.make_subtitle(sbFile.path);
-  if (r.ok) await poll(); else toast(t("e_" + (r.error || "unknown")), true);
-});
-$("#sbClear").addEventListener("click", async () => { await api.clear_finished(); await poll(); });
-const sdz = $("#sbDrop");
-sdz.addEventListener("dragenter", () => sdz.classList.add("over"));
-sdz.addEventListener("dragleave", () => sdz.classList.remove("over"));
-sdz.addEventListener("drop", () => sdz.classList.remove("over"));
-
 const tdz = $("#tcDrop");
 tdz.addEventListener("dragenter", () => tdz.classList.add("over"));
 tdz.addEventListener("dragleave", () => tdz.classList.remove("over"));
@@ -627,7 +586,6 @@ dz.addEventListener("drop", () => dz.classList.remove("over"));
 window.onFileDropped = (info) => {
   const view = $(".nav-item.is-active") && $(".nav-item.is-active").dataset.view;
   if (view === "conv") setTcFile(info);
-  else if (view === "sub") setSbFile(info);
   else { showView("gif"); setCvFile(info); }
 };
 
