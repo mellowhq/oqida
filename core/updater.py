@@ -3,12 +3,50 @@ import os
 import subprocess
 import sys
 import threading
+from pathlib import Path
 
 from . import paths
 from .netutil import download_file, http_json, is_newer
 from .version import UPDATE_REPO, __version__
 
 DETACHED = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+
+# macOSの自動更新スクリプト。アプリの終了を待ってから、新しい.dmgの中身で今のアプリを
+# まるごと置き換えて再起動する。失敗したら元に戻し、それでもダメなら.dmgを開いて手動に任せる。
+MAC_UPDATE_SCRIPT = r"""#!/bin/bash
+DMG="$1"; APP="$2"; PID="$3"
+for i in $(seq 1 60); do kill -0 "$PID" 2>/dev/null || break; sleep 0.5; done
+sleep 1
+MNT=$(hdiutil attach -nobrowse -noautoopen "$DMG" 2>/dev/null | grep -o '/Volumes/.*' | tail -1)
+SRC="$MNT/OQIDA.app"
+OK=0
+if [ -n "$MNT" ] && [ -d "$SRC" ]; then
+  BK="${APP}.old"
+  rm -rf "$BK"
+  if mv "$APP" "$BK" 2>/dev/null; then
+    if ditto "$SRC" "$APP" 2>/dev/null; then
+      xattr -dr com.apple.quarantine "$APP" 2>/dev/null
+      rm -rf "$BK"; OK=1
+    else
+      rm -rf "$APP"; mv "$BK" "$APP"
+    fi
+  fi
+fi
+[ -n "$MNT" ] && hdiutil detach "$MNT" >/dev/null 2>&1
+if [ "$OK" = "1" ]; then open "$APP"; else open "$DMG"; fi
+rm -f "$0" 2>/dev/null
+"""
+
+
+def _app_bundle_path():
+    """今動いているアプリの .app の場所。見つからなければ None（開発時など）。"""
+    try:
+        for parent in Path(sys.executable).resolve().parents:
+            if parent.name.endswith(".app"):
+                return str(parent)
+    except Exception:
+        pass
+    return None
 
 
 class AppUpdater:
@@ -90,8 +128,17 @@ class AppUpdater:
             inst = self._installer
         try:
             if paths.IS_MAC:
-                # macは.dmgを開いて（マウントして）、ユーザーがアプリを置き換える。アプリ自身は終了する。
-                subprocess.Popen(["open", inst], close_fds=True)
+                app = _app_bundle_path()
+                if app:
+                    # 新しい.dmgの中身で今のアプリを自動で入れ替えて再起動する（ドラッグ不要）
+                    script = paths.tmp_dir() / "oqida_update.sh"
+                    script.write_text(MAC_UPDATE_SCRIPT)
+                    os.chmod(script, 0o755)
+                    subprocess.Popen(["/bin/bash", str(script), inst, app, str(os.getpid())],
+                                     start_new_session=True, close_fds=True,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    subprocess.Popen(["open", inst], close_fds=True)   # .appが見つからなければ手動に任せる
             else:
                 subprocess.Popen([inst, "/SILENT", "/CLOSEAPPLICATIONS", "/NORESTART", "/SP-"],
                                  creationflags=DETACHED if paths.IS_WINDOWS else 0, close_fds=True)

@@ -629,7 +629,7 @@ function renderUpdates() {
       txt = t("u_downloading", { p }); btn = "b_wait"; dis = true; bar = true;
       $("#appUpdBar i").style.width = p + "%"; break;
     }
-    case "ready": txt = S.platform === "mac" ? t("u_ready_mac") : t("u_ready"); btn = S.platform === "mac" ? "b_apply_mac" : "b_apply"; break;
+    case "ready": txt = t("u_ready"); btn = "b_apply"; break;
     case "installing": txt = t("u_installing"); btn = "b_wait"; dis = true; break;
     case "error": txt = a.error === "dev_mode" ? t("u_dev") : t("u_error"); break;
   }
@@ -695,7 +695,7 @@ function renderUpdDialog() {
     prog.hidden = false; $("i", prog).style.width = p + "%";
   } else if (a.state === "ready" && !updApplying) {
     updApplying = true;
-    $("#updMsg").textContent = S.platform === "mac" ? t("upd_mac_replace") : t("upd_restarting");
+    $("#updMsg").textContent = t("upd_restarting");
     api.apply_app_update().then((r) => {
       if (r && r.error === "busy") { toast(t("u_busy"), true); dlg.hidden = true; updApplying = false; }
     });
